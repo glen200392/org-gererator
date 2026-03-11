@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 
 - Repository scaffolding files: README, LICENSE, CONTRIBUTING, SECURITY, .gitignore.
 - Repository collaboration files: CODE_OF_CONDUCT, issue templates, PR template.
+- GitHub Actions workflows for CI and deployed Pages health checks.
 
 ### Changed
 

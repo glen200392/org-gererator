@@ -45,6 +45,21 @@ This project is intended for GitHub Pages deployment.
 - Production URL (after Pages is enabled):
   `https://glen200392.github.io/org-gererator/`
 
+## Automation
+
+GitHub Actions included:
+
+- `CI` (`.github/workflows/ci.yml`)
+  - Runs on push/pull_request
+  - Validates required files
+  - Lints `index.html` with HTMLHint
+  - Runs a Playwright smoke test against local server
+
+- `Pages Healthcheck` (`.github/workflows/pages-healthcheck.yml`)
+  - Runs daily and can be triggered manually
+  - Verifies deployed GitHub Pages URL is reachable
+  - Checks key HTML content markers
+
 ## Validation Notes
 
 Recommended smoke checks before each release:

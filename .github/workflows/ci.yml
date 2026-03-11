@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate required files
+        run: |
+          test -f index.html
+          test -f README.md
+
+      - name: HTML lint
+        run: npx --yes htmlhint "index.html"
+
+      - name: Start local server
+        run: |
+          npx --yes http-server . -p 4173 > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Install Playwright browsers
+        run: npx --yes playwright install --with-deps chromium
+
+      - name: Smoke test in browser
+        run: |
+          node <<'EOF'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+
+            await page.goto('http://127.0.0.1:4173/index.html', { waitUntil: 'domcontentloaded' });
+            await page.waitForSelector('#previewCanvas');
+
+            const title = await page.textContent('h2');
+            if (!title || !title.includes('組織圖')) {
+              throw new Error('App title is missing or unexpected.');
+            }
+
+            await page.click('button.btn-sample');
+            await page.waitForTimeout(300);
+
+            const data = await page.$eval('#dataInput', el => el.value);
+            if (!data || data.trim().split('\n').length < 5) {
+              throw new Error('Sample data did not load as expected.');
+            }
+
+            await page.selectOption('#docLangSelect', 'en');
+            await page.waitForTimeout(300);
+
+            const dataAfterLangSwitch = await page.$eval('#dataInput', el => el.value);
+            if (!dataAfterLangSwitch.includes('HQ, John Doe')) {
+              throw new Error('Document language sample switch failed.');
+            }
+
+            await browser.close();
+          })();
+          EOF
+
+      - name: Stop local server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill "$(cat server.pid)" || true
+          fi
