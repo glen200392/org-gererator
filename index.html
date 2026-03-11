@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>企業組織圖產生器</title>
+    <script src="https://cdn.jsdelivr.net/gh/gitbrent/pptxgenjs@3.12.0/libs/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/gitbrent/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: "Microsoft JhengHei","PingFang TC","Helvetica Neue",sans-serif; padding: 0; margin: 0; background: #f0f2f5; min-height: 100vh; display: flex; flex-direction: column; overflow-y: auto; }
+        .container { flex: 1; width: 100%; background: white; padding: 16px 24px; display: flex; flex-direction: column; min-height: 100vh; overflow: visible; }
+        
+        /* ── Header ── */
+        .header-row { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #64FFDA; padding-bottom: 10px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+        .header-left { display: flex; align-items: center; gap: 8px; }
+        h2 { color: #0A192F; margin: 0; font-size: 20px; }
+        .header-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+        .btn-hd { background: #F8FAFC; color: #0A192F; border: 1px solid #CBD5E1; padding: 5px 11px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: bold; white-space: nowrap; }
+        .btn-hd:hover { background: #E2E8F0; }
+        
+        /* ── Compact Upload Bar ── */
+        .upload-bar { display: flex; gap: 12px; align-items: center; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 7px 14px; margin-bottom: 10px; flex-wrap: wrap; flex-shrink: 0; }
+        .upload-item { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #1A365D; font-weight: bold; white-space: nowrap; }
+        .upload-item input[type=file] { font-size: 12px; max-width: 180px; }
+        .upload-divider { width: 1px; height: 22px; background: #CBD5E1; flex-shrink: 0; }
+        #logoPreview { max-width: 60px; max-height: 26px; display: none; }
+        
+        /* 文件語言專屬下拉選單 */
+        .doc-lang-select { padding: 4px 8px; border-radius: 4px; border: 1px solid #94A3B8; font-size: 12px; background: white; cursor: pointer; color: #0A192F; font-weight: bold; }
+        
+        /* ── Theme Panel ── */
+        .theme-panel { background: linear-gradient(135deg, #0A192F 0%, #1A365D 100%); border-radius: 8px; padding: 9px 16px; margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0; }
+        .theme-panel-label { color: #64FFDA; font-weight: bold; font-size: 14px; white-space: nowrap; }
+        .theme-select { padding: 7px 12px; border-radius: 6px; border: 2px solid #64FFDA; font-size: 13px; background: #0A192F; color: #fff; cursor: pointer; font-weight: bold; }
+        .swatch-row { display: flex; gap: 4px; align-items: center; }
+        .swatch { width: 22px; height: 22px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); }
+        .swatch-hint { font-size: 11px; color: #94A3B8; margin-left: 4px; }
+        .btn-sample { background: rgba(255,255,255,0.1); color: #E2E8F0; border: 1px solid rgba(255,255,255,0.3); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+        .btn-sample:hover { background: rgba(255,255,255,0.2); }
+        
+        /* ── Collapsible Data Area ── */
+        .collapse-section { margin-bottom: 10px; border: 1px solid #E2E8F0; border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+        .collapse-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; background: #F8FAFC; cursor: pointer; user-select: none; }
+        .collapse-header:hover { background: #EEF2F7; }
+        .collapse-title { font-weight: bold; color: #1E293B; font-size: 13px; }
+        .collapse-arrow { color: #64748B; font-size: 13px; transition: transform 0.25s; }
+        .collapse-arrow.open { transform: rotate(180deg); }
+        .collapse-body { display: none; padding: 10px; }
+        .collapse-body.open { display: block; }
+        textarea { width: 100%; height: 140px; font-family: monospace; padding: 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13px; background: #1E293B; color: #F8FAFC; line-height: 1.6; resize: vertical; }
+        
+        /* ── Preview Section ── */
+        .preview-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+        .preview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+        .preview-title { font-weight: bold; color: #1E293B; font-size: 14px; }
+        .preview-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .zoom-btn { background: #F1F5F9; border: 1px solid #CBD5E1; color: #334155; width: 30px; height: 30px; border-radius: 6px; cursor: pointer; font-size: 17px; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1; }
+        .zoom-btn:hover { background: #E2E8F0; }
+        .zoom-label { font-size: 12px; color: #475569; min-width: 42px; text-align: center; font-weight: bold; }
+        .zoom-fit-btn { background: #F1F5F9; border: 1px solid #CBD5E1; color: #334155; padding: 4px 9px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+        .zoom-fit-btn:hover { background: #E2E8F0; }
+        .ppt-mode-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; }
+        .ppt-mode-select { padding: 4px 8px; border-radius: 6px; border: 1px solid #CBD5E1; font-size: 12px; background: white; cursor: pointer; }
+        
+        /* ── 預覽框 ── */
+        .preview-wrapper { flex: none; height: 80vh; min-height: 420px; overflow: hidden; background: #E8ECF0; border: 1px solid #CBD5E1; border-radius: 8px; margin-bottom: 12px; position: relative; cursor: grab; }
+        .preview-wrapper.grabbing { cursor: grabbing; user-select: none; }
+        .preview-inner { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+        #previewCanvas { display: block; box-shadow: 0 4px 10px rgba(0,0,0,0.12); }
+        .hint-text { font-size: 11px; color: #94A3B8; text-align: center; margin-bottom: 5px; flex-shrink: 0; }
+
+        @media (max-width: 900px) {
+            .preview-wrapper { height: 72vh; min-height: 360px; }
+        }
+        
+        /* ── Action Buttons ── */
+        .btn-group { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; flex-shrink: 0; }
+        button.action-btn { border: none; padding: 12px 6px; font-size: 13px; font-weight: bold; border-radius: 8px; cursor: pointer; transition: 0.3s; box-shadow: 0 3px 6px rgba(0,0,0,0.1); }
+        .btn-preview { background: #F8FAFC; color: #0A192F; border: 2px solid #0A192F; }
+        .btn-preview:hover { background: #E2E8F0; }
+        .btn-png { background: #2B6CB0; color: white; }
+        .btn-png:hover { background: #2C5282; }
+        .btn-pdf { background: #E53E3E; color: white; }
+        .btn-pdf:hover { background: #C53030; }
+        .btn-ppt { background: #0A192F; color: #64FFDA; border: 2px solid #64FFDA; }
+        .btn-ppt:hover { background: #64FFDA; color: #0A192F; }
+        
+        /* ── Modals ── */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-overlay.open { display: flex; }
+        .modal-content { background: white; padding: 24px; border-radius: 12px; width: 90%; max-width: 600px; max-height: 88vh; overflow-y: auto; position: relative; box-shadow: 0 12px 30px rgba(0,0,0,0.2); }
+        .modal-content.sm { max-width: 460px; }
+        .close-btn { position: absolute; top: 12px; right: 14px; font-size: 18px; cursor: pointer; color: #64748B; border: none; background: transparent; }
+        .modal-title { color: #0A192F; margin: 0 0 14px; border-bottom: 2px solid #64FFDA; padding-bottom: 8px; font-size: 17px; }
+        .manual-section { margin-bottom: 16px; }
+        .manual-section h4 { color: #1A365D; font-size: 14px; margin: 0 0 6px; border-left: 3px solid #64FFDA; padding-left: 8px; }
+        .manual-section p, .manual-section li { color: #334155; font-size: 13px; line-height: 1.75; margin: 0; }
+        .manual-section ul { padding-left: 18px; margin: 4px 0; }
+        .manual-section .tag { display: inline-block; background: #EFF6FF; color: #1D4ED8; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: bold; margin-right: 3px; }
+        .tbl { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+        .tbl th { background: #0A192F; color: white; padding: 5px 8px; text-align: left; }
+        .tbl td { border: 1px solid #E2E8F0; padding: 5px 8px; color: #334155; }
+        .tbl tr:nth-child(even) td { background: #F8FAFC; }
+        .excel-preview-tbl { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+        .excel-preview-tbl th { background: #0A192F; color: white; padding: 6px 10px; text-align: center; }
+        .excel-preview-tbl td { border: 1px solid #E2E8F0; padding: 5px 8px; text-align: center; font-family: monospace; }
+        .excel-preview-tbl tr:nth-child(even) td { background: #F8FAFC; }
+        .notice-box { background: #F0FDF4; border: 1px solid #86EFAC; border-radius: 7px; padding: 8px 12px; font-size: 12px; color: #166534; margin-bottom: 10px; }
+        .dl-btn { display: block; width: 100%; padding: 11px; background: #1B3F6E; color: white; border: none; border-radius: 7px; font-size: 14px; font-weight: bold; cursor: pointer; margin-top: 8px; }
+        .dl-btn:hover { background: #2B63A8; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header-row">
+        <div class="header-left">
+            <h2>📊 <span data-i18n="appTitle">企業組織圖產生器</span></h2>
+        </div>
+        <div class="header-btns">
+            <button class="btn-hd" onclick="openManual()">📖 <span data-i18n="btnManual">使用手冊</span></button>
+            <button class="btn-hd" onclick="openExcelModal()">📥 <span data-i18n="btnExcelTemplate">Excel 範本</span></button>
+            <button class="btn-hd" onclick="toggleUILang()" id="langBtn">🌐 EN (UI)</button>
+        </div>
+    </div>
+
+    <div class="upload-bar">
+        <div class="upload-item">
+            <span data-i18n="upExcel">📁 Excel 資料</span>
+            <input type="file" id="excelUpload" accept=".xlsx,.xls" onchange="handleExcelUpload()">
+        </div>
+        <div class="upload-divider"></div>
+        <div class="upload-item">
+            <span data-i18n="upLogo">🖼️ Logo（選填）</span>
+            <input type="file" id="logoUpload" accept="image/png,image/jpeg" onchange="handleLogoUpload()">
+            <img id="logoPreview" alt="logo">
+        </div>
+        <div class="upload-divider"></div>
+        <div class="upload-item">
+            <span data-i18n="upDocLang">📄 輸出內容語言</span>
+            <select id="docLangSelect" class="doc-lang-select" onchange="changeDocLang()">
+                <option value="tw">繁體中文</option>
+                <option value="en">English</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="theme-panel">
+        <span class="theme-panel-label" data-i18n="themeLabel">🎨 品牌主題</span>
+        <select id="themeSelect" class="theme-select" onchange="applyThemeAndPreview()">
+            <option value="blue" data-i18n="themeBlue">🔵 科技深藍（預設）</option>
+            <option value="gray" data-i18n="themeGray">⚪ 商務灰</option>
+            <option value="orange" data-i18n="themeOrange">🟠 活力橘</option>
+            <option value="primax" data-i18n="themePrimax">🩵 致伸科技青綠</option>
+            <option value="tymphany" data-i18n="themeTymphany">🔷 迪芬尼海軍藍</option>
+            <option value="white" data-i18n="themeWhite">⬜ 全白簡約</option>
+            <option value="bw" data-i18n="themeBlackWhite">⬛ 黑框黑字</option>
+        </select>
+        <div class="swatch-row">
+            <div class="swatch" id="sw0"></div>
+            <div class="swatch" id="sw1"></div>
+            <div class="swatch" id="sw2"></div>
+            <div class="swatch" id="sw3"></div>
+            <div class="swatch" id="sw4"></div>
+            <span class="swatch-hint">L1→L5</span>
+        </div>
+        <button class="btn-sample" onclick="loadSample()" data-i18n="btnSample">💡 載入範例資料</button>
+    </div>
+
+    <div class="collapse-section">
+        <div class="collapse-header" onclick="toggleCollapse()">
+            <span class="collapse-title" data-i18n="step3Title">📝 資料微調區（Level, Dept, Name, Title）</span>
+            <span class="collapse-arrow" id="collapseArrow">▼</span>
+        </div>
+        <div class="collapse-body" id="collapseBody">
+            <textarea id="dataInput">
+1, 總公司, 王大明, CEO
+2, 產品技術處, 陳小華, 技術長
+3, 軟體開發部, 林阿呆, 經理
+3, 系統維運部, 李大方, 經理
+2, 全球業務處, 張大帥, 營運長
+3, 國內業務, 孫六, 經理
+4, 北區組, 周七, 專員
+4, 中南區組, 吳八, 專員
+3, 海外業務, 鄭九, 經理
+</textarea>
+        </div>
+    </div>
+
+    <div class="preview-section">
+        <div class="preview-header">
+            <span class="preview-title" data-i18n="step4Title">👁️ 即時預覽</span>
+            <div class="preview-controls">
+                <button class="zoom-btn" onclick="zoom(-0.15)" title="縮小">−</button>
+                <span class="zoom-label" id="zoomLabel">100%</span>
+                <button class="zoom-btn" onclick="zoom(0.15)" title="放大">+</button>
+                <button class="zoom-fit-btn" onclick="zoomFit()" data-i18n="btnZoomFit">⊞ 適合</button>
+                <button class="zoom-fit-btn" onclick="zoomReset()">1:1</button>
+                <div style="width:1px;height:22px;background:#CBD5E1;"></div>
+                <div class="ppt-mode-row">
+                    <span data-i18n="pptModeLabel">PPT分頁：</span>
+                    <select id="pptModeSelect" class="ppt-mode-select">
+                        <option value="auto" data-i18n="pptModeAuto">🤖 自動</option>
+                        <option value="single" data-i18n="pptModeSingle">📄 整體單頁</option>
+                        <option value="dept" data-i18n="pptModeDept">🗂️ 選取部門</option>
+                    </select>
+                    <select id="deptSelect" class="ppt-mode-select" style="display:none;"></select>
+                </div>
+            </div>
+        </div>
+        <div class="hint-text" data-i18n="previewHint">💡 滾輪縮放 · 拖曳平移 · 點擊節點展開/收合</div>
+        <div class="preview-wrapper" id="previewWrapper">
+            <div class="preview-inner" id="previewInner">
+                <canvas id="previewCanvas"></canvas>
+            </div>
+        </div>
+        <div class="btn-group">
+            <button class="action-btn btn-preview" onclick="drawCanvasPreview(1)" data-i18n="btnUpdate">🔄 更新預覽</button>
+            <button class="action-btn btn-png" onclick="downloadPNG()" data-i18n="btnPng">🖼️ 下載 PNG</button>
+            <button class="action-btn btn-pdf" onclick="downloadPDF()" data-i18n="btnPdf">📄 下載 PDF</button>
+            <button class="action-btn btn-ppt" onclick="generatePPT()" data-i18n="btnPpt">⬇️ 下載 PPT</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="manualModal">
+    <div class="modal-content">
+        <button class="close-btn" onclick="closeModal('manualModal')">✖</button>
+        <h3 class="modal-title" data-i18n="manualTitle">📖 快速上手指南 (v3.1)</h3>
+        <div class="manual-section">
+            <h4 data-i18n="m1h">🚀 操作流程</h4>
+            <ul>
+                <li data-i18n="m1a">📥 下載 Excel 範本 → 填入 <strong>Level、Dept、Name、Title</strong></li>
+                <li data-i18n="m1b">📁 上傳 Excel → 資料自動載入</li>
+                <li data-i18n="m1c">🎨 選擇品牌主題 → 預覽即時更新</li>
+                <li data-i18n="m1d">🔍 滾輪縮放 / 拖曳平移瀏覽預覽</li>
+                <li data-i18n="m1e">⬇️ 匯出 PNG / PDF / PPT</li>
+            </ul>
+        </div>
+        <div class="manual-section">
+            <h4 data-i18n="m4h">🔍 縮放與平移</h4>
+            <ul>
+                <li data-i18n="m4a"><strong>滾輪</strong>：在預覽區滾動滑鼠縮放</li>
+                <li data-i18n="m4b"><strong>+/− 按鈕</strong>：每次 ±15%</li>
+                <li data-i18n="m4c"><strong>「適合」</strong>：整圖自動填滿預覽框</li>
+                <li data-i18n="m4d"><strong>「1:1」</strong>：還原 100% 原始尺寸</li>
+                <li data-i18n="m4e"><strong>拖曳</strong>：按住左鍵拖曳平移畫面</li>
+            </ul>
+        </div>
+        <div class="manual-section">
+            <h4 data-i18n="m5h">🗂️ PPT 分頁模式</h4>
+            <table class="tbl">
+                <tr><th data-i18n="mMode">模式</th><th data-i18n="mModeDesc">說明</th></tr>
+                <tr><td data-i18n="pptModeAuto">🤖 自動</td><td data-i18n="mMode1">偵測規模，過大自動切成總覽頁 + 各部門子頁</td></tr>
+                <tr><td data-i18n="pptModeSingle">📄 整體單頁</td><td data-i18n="mMode2">所有節點放同一頁</td></tr>
+                <tr><td data-i18n="pptModeDept">🗂️ 選取部門</td><td data-i18n="mMode3">只輸出所選部門子樹，適合單部門報告</td></tr>
+            </table>
+        </div>
+        <div class="manual-section">
+            <h4 data-i18n="m2h">📋 Excel 欄位（只需 4 欄）</h4>
+            <table class="tbl">
+                <tr><th data-i18n="mColField">欄位</th><th data-i18n="mColDesc">說明</th><th data-i18n="mColExample">範例</th></tr>
+                <tr><td>Level</td><td data-i18n="mLevelDesc">層級（1=根節點）</td><td>1, 2, 3…</td></tr>
+                <tr><td>Dept</td><td data-i18n="mDeptDesc">部門/單位名稱</td><td data-i18n="mDeptEx">總公司</td></tr>
+                <tr><td>Name</td><td data-i18n="mNameDesc">負責人姓名</td><td data-i18n="mNameEx">王大明</td></tr>
+                <tr><td>Title</td><td data-i18n="mTitleDesc">職稱</td><td data-i18n="mTitleEx">CEO</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="excelModal">
+    <div class="modal-content sm">
+        <button class="close-btn" onclick="closeModal('excelModal')">✖</button>
+        <h3 class="modal-title" data-i18n="excelModalTitle">📥 Excel 範本下載</h3>
+        <div class="notice-box" data-i18n="excelModalDesc">✅ 只需 4 欄，顏色在網頁選主題即可，不需填色碼</div>
+        <table class="excel-preview-tbl">
+            <tr><th>Level</th><th>Dept</th><th>Name</th><th>Title</th></tr>
+            <tr><td>1</td><td data-i18n="mDeptEx">總公司</td><td data-i18n="mNameEx">王大明</td><td data-i18n="mTitleEx">CEO</td></tr>
+            <tr><td>2</td><td>Sales</td><td>John</td><td>VP</td></tr>
+            <tr><td>3</td><td>Team A</td><td>Alice</td><td>Manager</td></tr>
+        </table>
+        <button class="dl-btn" onclick="downloadExcelTemplate()">⬇️ <span data-i18n="btnDownloadTemplate">下載 Excel 範本（.xlsx）</span></button>
+    </div>
+</div>
+
+<script>
+// ══════════════════════════════════════
+// 🌍 i18n 雙軌語言系統 (UI vs Document)
+// ══════════════════════════════════════
+let uiLang = 'tw';
+let docLang = 'tw';
+
+const translations = {
+    tw: {
+        appTitle: "企業組織圖產生器", btnManual: "使用手冊", btnExcelTemplate: "Excel 範本",
+        upExcel: "📁 Excel 資料", upLogo: "🖼️ Logo（選填）", upDocLang: "📄 輸出內容語言",
+        themeLabel: "🎨 品牌主題", themeDefault: "🎨 選擇色彩主題...",
+        themeBlue: "🔵 科技深藍（預設）", themeGray: "⚪ 商務灰", themeOrange: "🟠 活力橘",
+        themePrimax: "🩵 致伸科技青綠", themeTymphany: "🔷 迪芬尼海軍藍", themeWhite: "⬜ 全白簡約", themeBlackWhite: "⬛ 黑框黑字",
+        btnSample: "💡 載入範例資料", step3Title: "📝 資料微調區（Level, Dept, Name, Title）",
+        step4Title: "👁️ 即時預覽", btnZoomFit: "⊞ 適合",
+        pptModeLabel: "PPT分頁：", pptModeAuto: "🤖 自動", pptModeSingle: "📄 整體單頁", pptModeDept: "🗂️ 選取部門",
+        previewHint: "💡 滾輪縮放 · 拖曳平移 · 點擊節點展開/收合",
+        btnUpdate: "🔄 更新預覽", btnPng: "🖼️ 下載 PNG", btnPdf: "📄 下載 PDF", btnPpt: "⬇️ 下載 PPT",
+        
+        manualTitle: "📖 快速上手指南 (v3.1)",
+        m1h: "🚀 操作流程",
+        m1a: "📥 下載 Excel 範本 → 填入 <strong>Level、Dept、Name、Title</strong>",
+        m1b: "📁 上傳 Excel → 資料自動載入",
+        m1c: "🎨 選擇品牌主題 → 預覽即時更新",
+        m1d: "🔍 滾輪縮放 / 拖曳平移瀏覽預覽",
+        m1e: "⬇️ 匯出 PNG / PDF / PPT",
+        
+        m4h: "🔍 縮放與平移",
+        m4a: "<strong>滾輪</strong>：在預覽區滾動滑鼠縮放",
+        m4b: "<strong>+/− 按鈕</strong>：每次 ±15%",
+        m4c: "<strong>「適合」</strong>：整圖自動填滿預覽框",
+        m4d: "<strong>「1:1」</strong>：還原 100% 原始尺寸",
+        m4e: "<strong>拖曳</strong>：按住左鍵拖曳平移畫面",
+        
+        m5h: "🗂️ PPT 分頁模式", mMode: "模式", mModeDesc: "說明",
+        mMode1: "偵測規模，過大自動切成總覽頁 + 各部門子頁", mMode2: "所有節點放同一頁", mMode3: "只輸出所選部門子樹，適合單部門報告",
+        
+        m2h: "📋 Excel 欄位（只需 4 欄）", mColField: "欄位", mColDesc: "說明", mColExample: "範例",
+        mLevelDesc: "層級（1=根節點）", mDeptDesc: "部門/單位名稱", mNameDesc: "負責人姓名", mTitleDesc: "職稱",
+        mDeptEx: "總公司", mNameEx: "王大明", mTitleEx: "CEO",
+        
+        excelModalTitle: "📥 Excel 範本下載",
+        excelModalDesc: "✅ 只需 4 欄，顏色在網頁選主題即可，不需填色碼",
+        btnDownloadTemplate: "下載 Excel 範本（.xlsx）",
+        
+        // Document Level Translations
+        slideTitleObj: "企業組織架構圖",
+        slideTitleOverview: "企業組織架構圖 - 高階總覽",
+        slideTitleDept: "部門架構圖 - "
+    },
+    en: {
+        appTitle: "Corporate Org Chart Generator", btnManual: "User Guide", btnExcelTemplate: "Template",
+        upExcel: "📁 Excel Data", upLogo: "🖼️ Logo (Opt)", upDocLang: "📄 Content Lang",
+        themeLabel: "🎨 Theme", themeDefault: "🎨 Select Theme...",
+        themeBlue: "🔵 Tech Blue (Def)", themeGray: "⚪ Biz Gray", themeOrange: "🟠 Warm Orange",
+        themePrimax: "🩵 PRIMAX Teal", themeTymphany: "🔷 Tymphany Navy", themeWhite: "⬜ Clean White", themeBlackWhite: "⬛ B & W",
+        btnSample: "💡 Load Sample", step3Title: "📝 Data Editor (Level, Dept, Name, Title)",
+        step4Title: "👁️ Live Preview", btnZoomFit: "⊞ Fit",
+        pptModeLabel: "PPT Mode:", pptModeAuto: "🤖 Auto", pptModeSingle: "📄 Single Page", pptModeDept: "🗂️ By Dept",
+        previewHint: "💡 Scroll to zoom · Drag to pan · Click node to toggle",
+        btnUpdate: "🔄 Update", btnPng: "🖼️ Save PNG", btnPdf: "📄 Save PDF", btnPpt: "⬇️ Save PPT",
+        
+        manualTitle: "📖 Quick Start Guide (v3.1)",
+        m1h: "🚀 Workflow",
+        m1a: "📥 Download Template → Fill in <strong>Level, Dept, Name, Title</strong>",
+        m1b: "📁 Upload Excel → Auto loads data",
+        m1c: "🎨 Select Theme → Instant preview",
+        m1d: "🔍 Scroll/Drag to navigate preview",
+        m1e: "⬇️ Export as PNG / PDF / PPT",
+        
+        m4h: "🔍 Navigation",
+        m4a: "<strong>Scroll</strong>: Mouse wheel to zoom",
+        m4b: "<strong>+/−</strong>: Zoom ±15%",
+        m4c: "<strong>Fit</strong>: Auto fit to screen",
+        m4d: "<strong>1:1</strong>: Actual size",
+        m4e: "<strong>Drag</strong>: Left click and hold to pan",
+        
+        m5h: "🗂️ PPT Pagination", mMode: "Mode", mModeDesc: "Description",
+        mMode1: "Auto splits into Overview + Sub-departments if too large", mMode2: "Forces all nodes onto one slide", mMode3: "Exports only the selected sub-tree",
+        
+        m2h: "📋 Excel Columns (Only 4 needed)", mColField: "Col", mColDesc: "Description", mColExample: "Example",
+        mLevelDesc: "Hierarchy (1=root)", mDeptDesc: "Dept/Unit Name", mNameDesc: "Person in charge", mTitleDesc: "Job Title",
+        mDeptEx: "Headquarters", mNameEx: "John Doe", mTitleEx: "CEO",
+        
+        excelModalTitle: "📥 Download Template",
+        excelModalDesc: "✅ Only 4 columns required. Colors are applied via web UI.",
+        btnDownloadTemplate: "Download Template (.xlsx)",
+        
+        // Document Level Translations
+        slideTitleObj: "Organization Chart",
+        slideTitleOverview: "Org Chart - Executive Overview",
+        slideTitleDept: "Department Chart - "
+    }
+};
+
+// 切換介面語言 (不影響輸入的文字內容)
+function toggleUILang(){
+    uiLang = uiLang === 'tw' ? 'en' : 'tw';
+    document.getElementById('langBtn').innerText = uiLang === 'tw' ? '🌐 EN (UI)' : '🌐 中文 (UI)';
+    
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const k = el.getAttribute('data-i18n');
+        if (translations[uiLang][k] !== undefined) {
+            el.innerHTML = translations[uiLang][k];
+        }
+    });
+}
+
+// 切換內容語言 (影響標題與範例資料)
+function changeDocLang(){
+    docLang = document.getElementById('docLangSelect').value;
+
+    const currentData = document.getElementById('dataInput').value.trim();
+    const isSampleTw = currentData === sampleTw.trim();
+    const isSampleEn = currentData === sampleEn.trim();
+
+    // 只有在顯示範例資料時才自動切換內容，不覆蓋使用者自行輸入的資料
+    if (isSampleTw || isSampleEn) {
+        collapsed.clear();
+        document.getElementById('dataInput').value = docLang === 'tw' ? sampleTw : sampleEn;
+    }
+
+    drawCanvasPreview(1);
+    refreshDeptSelect();
+}
+
+// ══ Modal ══
+function openManual(){ document.getElementById('manualModal').classList.add('open'); }
+function openExcelModal(){ document.getElementById('excelModal').classList.add('open'); }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+document.addEventListener('click',e=>{ if(e.target.classList.contains('modal-overlay')) e.target.classList.remove('open'); });
+
+// ══ Collapse ══
+function toggleCollapse(){
+    document.getElementById('collapseBody').classList.toggle('open');
+    document.getElementById('collapseArrow').classList.toggle('open');
+}
+
+// ══ Themes ══
+const THEMES={
+    blue:    ['0A192F','1A365D','2C5282','2B6CB0','3182CE'],
+    gray:    ['2D3748','4A5568','718096','A0AEC0','CBD5E0'],
+    orange:  ['7B341E','9C4221','C05621','DD6B20','ED8936'],
+    primax:  ['004D4D','006666','007A7A','009999','00B3B3'],
+    tymphany:['0D2440','152E52','1B3F6E','22508A','2B63A8'],
+    white:   ['FFFFFF','F8FAFC','F1F5F9','E2E8F0','CBD5E1'],
+    bw:      ['1A1A1A','333333','4D4D4D','666666','808080']
+};
+function getThemeColors(){ return THEMES[document.getElementById('themeSelect').value]||THEMES.blue; }
+function updateSwatches(){
+    getThemeColors().forEach((h,i)=>{ const el=document.getElementById('sw'+i); if(el) el.style.background='#'+h; });
+}
+
+// 切換主題時只更新色塊並重繪，不回寫色碼到 textarea
+function applyThemeAndPreview(){ 
+    updateSwatches(); 
+    drawCanvasPreview(1); 
+    refreshDeptSelect(); 
+}
+
+// ══ Core ══
+const BASE_CARD_W=1.8,BASE_CARD_H=0.8,BASE_GAP_X=0.4,BASE_GAP_Y=1.0,PPI=100;
+let logoBase64=null,logoImg=new Image();
+let collapsed=new Set(),hitBoxes=[],isExporting=false;
+
+const sampleTw = `1, 總公司, 王大明, CEO
+2, 產品技術處, 陳小華, 技術長
+3, 軟體開發部, 林阿呆, 經理
+3, 系統維運部, 李大方, 經理
+2, 全球業務處, 張大帥, 營運長
+3, 國內業務, 孫六, 經理
+4, 北區組, 周七, 專員
+4, 中南區組, 吳八, 專員
+3, 海外業務, 鄭九, 經理`;
+
+const sampleEn = `1, HQ, John Doe, CEO
+2, Technology, Jane Smith, CTO
+3, Software Dev, Bob Lee, Manager
+3, IT Ops, Alice Wang, Manager
+2, Global Sales, Tom Clark, COO
+3, Domestic, Sam Sun, Manager
+4, North Team, Ivy Chou, Spec
+4, South Team, Ken Wu, Spec
+3, Overseas, Zoe Cheng, Manager`;
+
+// ══ Zoom & Pan ══
+let zoomScale=1.0,panX=12,panY=12;
+let isDragging=false,dragSX=0,dragSY=0,dragOX=0,dragOY=0;
+function applyTransform(){
+    document.getElementById('previewInner').style.transform=`translate(${panX}px,${panY}px) scale(${zoomScale})`;
+    document.getElementById('zoomLabel').textContent=Math.round(zoomScale*100)+'%';
+}
+function zoom(delta,cx,cy){
+    const w=document.getElementById('previewWrapper');
+    const r=w.getBoundingClientRect();
+    const px=(cx!==undefined?cx:r.width/2)-panX;
+    const py=(cy!==undefined?cy:r.height/2)-panY;
+    const prev=zoomScale;
+    zoomScale=Math.max(0.1,Math.min(5.0,zoomScale+delta));
+    panX-=px*(zoomScale-prev); panY-=py*(zoomScale-prev);
+    applyTransform();
+}
+function zoomFit(){
+    const w=document.getElementById('previewWrapper');
+    const c=document.getElementById('previewCanvas');
+    if(!c.offsetWidth) return;
+    const sx=w.clientWidth/c.offsetWidth, sy=w.clientHeight/c.offsetHeight;
+    zoomScale=Math.min(sx,sy)*0.92;
+    panX=(w.clientWidth-c.offsetWidth*zoomScale)/2;
+    panY=(w.clientHeight-c.offsetHeight*zoomScale)/2;
+    applyTransform();
+}
+function zoomReset(){ zoomScale=1.0; panX=12; panY=12; applyTransform(); }
+
+// ══ Data ══
+function parseDataToTree(){
+    const colors=getThemeColors();
+    let roots=[],stack={};
+    document.getElementById('dataInput').value.trim().split('\n').forEach(line=>{
+        const p=line.split(',').map(s=>s.trim());
+        if(p.length<4) return;
+        let rawColor=p[4]?p[4].replace('#',''):null;
+        if(!rawColor||!/^[0-9A-Fa-f]{6}$/.test(rawColor)) rawColor=colors[Math.min(parseInt(p[0])-1,colors.length-1)];
+        const node={level:parseInt(p[0]),dept:p[1],name:p[2],title:p[3],bgColor:'#'+rawColor,children:[]};
+        if(node.level===1) roots.push(node);
+        else { let pl=node.level-1; while(pl>=1&&!stack[pl]) pl--; if(stack[pl]) stack[pl].children.push(node); }
+        stack[node.level]=node;
+        Object.keys(stack).forEach(k=>{ if(parseInt(k)>node.level) delete stack[k]; });
+    });
+    return roots;
+}
+function nodeKey(n){ return n.dept+'::'+n.name; }
+function calculateLayout(nodes,maxLevels){
+    let leafX=0,maxD=1;
+    function calc(node,d){
+        if(d>maxD) maxD=d;
+        node.renderY=(d-1)*(BASE_CARD_H+BASE_GAP_Y);
+        const visCh=(d<maxLevels&&!collapsed.has(nodeKey(node)))?node.children:[];
+        if(!visCh.length){ node.renderX=leafX; leafX+=BASE_CARD_W+BASE_GAP_X; }
+        else { visCh.forEach(c=>calc(c,d+1)); node.renderX=(visCh[0].renderX+visCh[visCh.length-1].renderX)/2; }
+    }
+    nodes.forEach(r=>calc(r,1));
+    return {totalWidth:leafX,actualDepth:maxD};
+}
+
+// ══ Draw Helpers ══
+function drawRR(ctx,x,y,w,h,r){
+    r=Math.min(r,w/2,h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+    ctx.closePath();
+}
+function fitText(ctx,text,maxW){
+    if(ctx.measureText(text).width<=maxW) return text;
+    while(text.length>1&&ctx.measureText(text+'…').width>maxW) text=text.slice(0,-1);
+    return text+'…';
+}
+function getTC(hex){
+    const h=hex.replace('#','');
+    const r=parseInt(h.substring(0,2),16)||10,g=parseInt(h.substring(2,4),16)||25,b=parseInt(h.substring(4,6),16)||47;
+    const light=(0.299*r+0.587*g+0.114*b)/255>0.55;
+    return {dept:light?'#1E293B':'#E2E8F0',name:light?'#0A192F':'#FFFFFF',icon:light?'#0A192F':'#64FFDA',border:light?'#94A3B8':'#64FFDA'};
+}
+function getPptTC(hex){
+    const h=hex.replace('#','');
+    const r=parseInt(h.substring(0,2),16)||10,g=parseInt(h.substring(2,4),16)||25,b=parseInt(h.substring(4,6),16)||47;
+    const light=(0.299*r+0.587*g+0.114*b)/255>0.55;
+    return {dept:light?'1E293B':'E2E8F0',name:light?'0A192F':'FFFFFF',border:light?'94A3B8':'64FFDA'};
+}
+
+// ══ Canvas Draw ══
+function drawCanvasPreview(scale=1){
+    const roots=parseDataToTree(); if(!roots.length) return;
+    const li=calculateLayout(roots,999);
+    const canvas=document.getElementById('previewCanvas'),ctx=canvas.getContext('2d');
+    const padX=0.5*PPI,padY=1.0*PPI;
+    const logW=li.totalWidth*PPI+padX*2;
+    const logH=(li.actualDepth*BASE_CARD_H+(li.actualDepth-1)*BASE_GAP_Y)*PPI+padY*2;
+    canvas.width=logW*scale; canvas.height=logH*scale;
+    canvas.style.width=logW+'px'; canvas.style.height=logH+'px';
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle='#FFFFFF'; ctx.fillRect(0,0,logW,logH);
+    ctx.fillStyle='#0A192F';
+    ctx.font='bold 20px "Microsoft JhengHei","PingFang TC","Helvetica Neue",sans-serif';
+    ctx.textAlign='left'; ctx.textBaseline='top';
+    // 🌟 使用內容語言決定標題
+    ctx.fillText(translations[docLang].slideTitleObj, padX, 14);
+
+    if(logoBase64&&logoImg.complete&&logoImg.naturalWidth>0){
+        const maxLW=180,maxLH=55;
+        const lr=Math.min(maxLW/logoImg.naturalWidth,maxLH/logoImg.naturalHeight,1);
+        ctx.drawImage(logoImg,logW-logoImg.naturalWidth*lr-padX,8,logoImg.naturalWidth*lr,logoImg.naturalHeight*lr);
+    }
+
+    if(scale===1) hitBoxes=[];
+    function drawNode(node){
+        const cX=node.renderX*PPI+padX,cY=node.renderY*PPI+padY,cW=BASE_CARD_W*PPI,cH=BASE_CARD_H*PPI;
+        const isC=collapsed.has(nodeKey(node));
+        const tc=getTC(node.bgColor);
+        if(scale===1) hitBoxes.push({x:cX,y:cY,w:cW,h:cH,node});
+
+        if(node.children.length>0&&!isC){
+            const pBY=cY+cH,chTY=node.children[0].renderY*PPI+padY,mY=pBY+(chTY-pBY)/2,pCX=cX+cW/2;
+            ctx.strokeStyle='#CBD5E1'; ctx.lineWidth=2;
+            ctx.beginPath(); ctx.moveTo(pCX,pBY); ctx.lineTo(pCX,mY); ctx.stroke();
+            const fCX=node.children[0].renderX*PPI+padX+cW/2,lCX=node.children[node.children.length-1].renderX*PPI+padX+cW/2;
+            ctx.beginPath(); ctx.moveTo(fCX,mY); ctx.lineTo(lCX,mY); ctx.stroke();
+            node.children.forEach(ch=>{
+                ctx.beginPath(); ctx.moveTo(ch.renderX*PPI+padX+cW/2,mY); ctx.lineTo(ch.renderX*PPI+padX+cW/2,chTY); ctx.stroke();
+                drawNode(ch);
+            });
+        }
+        ctx.fillStyle=node.bgColor; ctx.strokeStyle=tc.border; ctx.lineWidth=2;
+        drawRR(ctx,cX,cY,cW,cH,5); ctx.fill(); ctx.stroke();
+
+        if(node.children.length>0){
+            ctx.fillStyle=tc.icon; ctx.font='bold 10px Arial';
+            ctx.textAlign='right'; ctx.textBaseline='top';
+            ctx.fillText(isC?'▶':'▼',cX+cW-5,cY+5);
+        }
+
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font='bold 13px "Microsoft JhengHei","PingFang TC",sans-serif';
+        ctx.fillStyle=tc.dept; ctx.fillText(fitText(ctx,node.dept,cW-14),cX+cW/2,cY+cH*0.35);
+        ctx.font='12px "Microsoft JhengHei","PingFang TC",sans-serif';
+        ctx.fillStyle=tc.name; ctx.fillText(fitText(ctx,node.name+' ('+node.title+')',cW-10),cX+cW/2,cY+cH*0.68);
+    }
+    roots.forEach(r=>drawNode(r));
+}
+
+// ══ Click expand/collapse ══
+function handleCanvasClick(e){
+    if(isDragging) return;
+    const w=document.getElementById('previewWrapper');
+    const wr=w.getBoundingClientRect();
+    const cx=(e.clientX-wr.left-panX)/zoomScale,cy=(e.clientY-wr.top-panY)/zoomScale;
+    for(const box of hitBoxes){
+        if(cx>=box.x&&cx<=box.x+box.w&&cy>=box.y&&cy<=box.y+box.h){
+            if(box.node.children.length>0){
+                const k=nodeKey(box.node);
+                collapsed.has(k)?collapsed.delete(k):collapsed.add(k);
+                drawCanvasPreview(1);
+            }
+            break;
+        }
+    }
+}
+
+// ══ Dept Select for PPT ══
+function refreshDeptSelect(){
+    const roots=parseDataToTree(),sel=document.getElementById('deptSelect');
+    sel.innerHTML='';
+    function addOpts(node,d){ const o=document.createElement('option'); o.value=nodeKey(node); o.textContent='　'.repeat(d-1)+node.dept+' ('+node.name+')'; sel.appendChild(o); node.children.forEach(c=>addOpts(c,d+1)); }
+    roots.forEach(r=>addOpts(r,1));
+}
+document.addEventListener('DOMContentLoaded',()=>{
+    document.getElementById('pptModeSelect').addEventListener('change',function(){ document.getElementById('deptSelect').style.display=this.value==='dept'?'inline-block':'none'; });
+});
+
+// ══ Export ══
+function downloadPNG(){
+    if(isExporting) return; isExporting=true;
+    drawCanvasPreview(3);
+    const a=document.createElement('a'); a.download='OrgChart_HiRes.png';
+    a.href=document.getElementById('previewCanvas').toDataURL('image/png',1.0); a.click();
+    setTimeout(()=>{ drawCanvasPreview(1); isExporting=false; },100);
+}
+function downloadPDF(){
+    if(isExporting) return; isExporting=true;
+    drawCanvasPreview(3);
+    const c=document.getElementById('previewCanvas');
+    const {jsPDF}=window.jspdf;
+    const lW=c.width/3,lH=c.height/3;
+    const pdf=new jsPDF({unit:'px',format:[lW,lH]});
+    pdf.addImage(c.toDataURL('image/png',1.0),'PNG',0,0,lW,lH);
+    pdf.save('OrgChart_HiRes.pdf');
+    setTimeout(()=>{ drawCanvasPreview(1); isExporting=false; },100);
+}
+function generatePPT(){
+    const allRoots=parseDataToTree(); if(!allRoots.length) return;
+    const mode=document.getElementById('pptModeSelect').value;
+    let pres=new PptxGenJS(); pres.layout='LAYOUT_16x9';
+    const SW=9.5,SH=4.5;
+    function renderSlide(nodesToRender,slideTitle,maxLevels){
+        const cloned=JSON.parse(JSON.stringify(nodesToRender));
+        const li=calculateLayout(cloned,maxLevels);
+        const tH=li.actualDepth*BASE_CARD_H+(li.actualDepth-1)*BASE_GAP_Y;
+        const sc=Math.min(1.0,SW/li.totalWidth,SH/tH);
+        const CW=BASE_CARD_W*sc,CH=BASE_CARD_H*sc;
+        const offX=(10-li.totalWidth*sc)/2,offY=1.2;
+        const slide=pres.addSlide();
+        slide.addText(slideTitle,{x:0.5,y:0.3,w:'80%',h:0.8,fontSize:22,bold:true,color:'0A192F'});
+        if(logoBase64&&logoImg.complete) slide.addImage({data:logoBase64,x:8.0,y:0.2,w:1.5,h:0.8,sizing:{type:'contain'}});
+        function drawN(node,depth){
+            const fx=node.renderX*sc+offX,fy=node.renderY*sc+offY;
+            const visCh=depth<maxLevels?node.children:[];
+            const tc=getPptTC(node.bgColor);
+            if(visCh.length>0){
+                const pBY=fy+CH,cTY=visCh[0].renderY*sc+offY,mY=pBY+(cTY-pBY)/2,pCX=fx+CW/2;
+                slide.addShape(pres.ShapeType.line,{x:pCX,y:pBY,w:0,h:mY-pBY,line:{color:'CBD5E1',width:1.5}});
+                const fCX=visCh[0].renderX*sc+offX+CW/2,lCX=visCh[visCh.length-1].renderX*sc+offX+CW/2;
+                if(lCX-fCX>0) slide.addShape(pres.ShapeType.line,{x:fCX,y:mY,w:lCX-fCX,h:0,line:{color:'CBD5E1',width:1.5}});
+                visCh.forEach(ch=>{ slide.addShape(pres.ShapeType.line,{x:ch.renderX*sc+offX+CW/2,y:mY,w:0,h:cTY-mY,line:{color:'CBD5E1',width:1.5}}); drawN(ch,depth+1); });
+            } else if(depth===maxLevels&&node.children.length>0){
+                slide.addText('▼',{x:fx,y:fy+CH,w:CW,h:0.25,fontSize:Math.max(8,14*sc),color:'64FFDA',align:'center',valign:'middle',fontFace:'Arial'});
+            }
+            slide.addShape(pres.ShapeType.rect,{x:fx,y:fy,w:CW,h:CH,fill:{color:node.bgColor.replace('#','')},line:{color:tc.border,width:1.0}});
+            slide.addText([
+                {text:node.dept+'\n',options:{fontSize:Math.max(7,10*sc),color:tc.dept,bold:true}},
+                {text:node.name+' ('+node.title+')',options:{fontSize:Math.max(8,11*sc),color:tc.name}}
+            ],{x:fx,y:fy,w:CW,h:CH,align:'center',valign:'middle'});
+        }
+        cloned.forEach(r=>drawN(r,1));
+    }
+    
+    // 🌟 輸出 PPT 時使用內容語言的標題
+    if(mode==='single'){
+        renderSlide(allRoots, translations[docLang].slideTitleObj, 999);
+    } else if(mode==='dept'){
+        const sk=document.getElementById('deptSelect').value;
+        function findNode(nodes,key){ for(const n of nodes){ if(nodeKey(n)===key) return n; const f=findNode(n.children,key); if(f) return f; } return null; }
+        const target=findNode(allRoots,sk);
+        renderSlide(target?[target]:allRoots, target ? translations[docLang].slideTitleDept + target.dept : translations[docLang].slideTitleObj, 999);
+    } else {
+        const testC=JSON.parse(JSON.stringify(allRoots));
+        const tl=calculateLayout(testC,999);
+        const gS=Math.min(1.0,SW/tl.totalWidth,SH/(tl.actualDepth*BASE_CARD_H+(tl.actualDepth-1)*BASE_GAP_Y));
+        if(gS<0.6){
+            renderSlide(allRoots, translations[docLang].slideTitleOverview, 2);
+            allRoots.forEach(r=>r.children.forEach(d=>{ if(d.children.length>0) renderSlide([d], translations[docLang].slideTitleDept + d.dept, 999); }));
+        } else {
+            renderSlide(allRoots, translations[docLang].slideTitleObj, 999);
+        }
+    }
+    pres.writeFile({fileName:'OrgChart_Output.pptx'});
+}
+
+// ══ Excel Template ══
+function downloadExcelTemplate(){
+    const wb=XLSX.utils.book_new();
+    const data=[['Level','Dept','Name','Title'],[1,'總公司','王大明','CEO'],[2,'產品技術處','陳小華','技術長'],[3,'軟體開發部','林阿呆','經理'],[3,'系統維運部','李大方','經理'],[2,'全球業務處','張大帥','營運長'],[3,'國內業務','孫六','經理'],[4,'北區組','周七','專員'],[3,'海外業務','鄭九','經理']];
+    const ws=XLSX.utils.aoa_to_sheet(data); ws['!cols']=[{wch:8},{wch:16},{wch:10},{wch:12}];
+    XLSX.utils.book_append_sheet(wb,ws,'OrgChart');
+    const ws2=XLSX.utils.aoa_to_sheet([['欄位','說明'],['Level','層級數字，1=最高層'],['Dept','部門名稱'],['Name','負責人姓名'],['Title','職稱'],['顏色','不需填寫，上傳後在網頁主題選擇器選取']]);
+    ws2['!cols']=[{wch:10},{wch:30}];
+    XLSX.utils.book_append_sheet(wb,ws2,'說明');
+    XLSX.writeFile(wb,'OrgChart_Template.xlsx');
+    closeModal('excelModal');
+}
+
+// ══ Upload ══
+function handleLogoUpload(){
+    const f=document.getElementById('logoUpload').files[0]; if(!f) return;
+    const r=new FileReader();
+    r.onload=e=>{ logoBase64=e.target.result; document.getElementById('logoPreview').src=logoBase64; document.getElementById('logoPreview').style.display='inline'; logoImg=new Image(); logoImg.onload=()=>drawCanvasPreview(1); logoImg.src=logoBase64; };
+    r.readAsDataURL(f);
+}
+
+function handleExcelUpload(){
+    const f=document.getElementById('excelUpload').files[0]; if(!f) return;
+    if(f.size>5*1024*1024){ alert(uiLang==='tw'?'⚠️ 檔案過大，請使用 5MB 以內的 Excel':'⚠️ File too large! Max 5MB.'); return; }
+    const r=new FileReader();
+    r.onload=e=>{
+        const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+        const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+        let out='';
+        rows.forEach(row=>{ 
+            const lv=row['Level']||row['層級']||'';
+            const dp=row['Dept']||row['部門']||'';
+            const nm=row['Name']||row['姓名']||'';
+            const ti=row['Title']||row['職稱']||'';
+            let colorStr = row['Color']||row['顏色']||row['色碼'];
+            let color = colorStr ? colorStr.toString().replace('#','') : '';
+            if(color && /^\d+$/.test(color)) color=parseInt(color).toString(16).padStart(6,'0');
+            if(lv!=='') out+=`${lv}, ${dp}, ${nm}, ${ti}${color ? ', '+color : ''}\n`; 
+        });
+        if(!out.trim()){ alert(uiLang==='tw'?'⚠️ 找不到對應欄位！':'⚠️ Columns not matched!'); return; }
+        collapsed.clear(); document.getElementById('dataInput').value=out.trim();
+        const b=document.getElementById('collapseBody'),a=document.getElementById('collapseArrow');
+        if(!b.classList.contains('open')){ b.classList.add('open'); a.classList.add('open'); }
+        applyThemeAndPreview();
+    };
+    r.readAsArrayBuffer(f);
+}
+
+// ══ Sample & Init ══
+// 🌟 根據內容語言(docLang)載入範本
+function loadSample(){
+    collapsed.clear(); document.getElementById('dataInput').value = docLang === 'tw' ? sampleTw : sampleEn;
+    applyThemeAndPreview();
+}
+
+let debTimer=null;
+document.addEventListener('DOMContentLoaded',()=>{
+    document.getElementById('dataInput').addEventListener('input',()=>{
+        clearTimeout(debTimer);
+        debTimer=setTimeout(()=>{ drawCanvasPreview(1); refreshDeptSelect(); },500);
+    });
+    window.addEventListener('resize',()=>{ clearTimeout(debTimer); debTimer=setTimeout(()=>drawCanvasPreview(1),300); });
+    const w=document.getElementById('previewWrapper');
+    w.addEventListener('wheel',e=>{ e.preventDefault(); const r=w.getBoundingClientRect(); zoom(e.deltaY<0?0.1:-0.1,e.clientX-r.left,e.clientY-r.top); },{passive:false});
+    w.addEventListener('mousedown',e=>{ isDragging=true; w.classList.add('grabbing'); dragSX=e.clientX; dragSY=e.clientY; dragOX=panX; dragOY=panY; });
+    document.addEventListener('mousemove',e=>{ if(!isDragging) return; panX=dragOX+(e.clientX-dragSX); panY=dragOY+(e.clientY-dragSY); applyTransform(); });
+    document.addEventListener('mouseup',()=>{ isDragging=false; document.getElementById('previewWrapper').classList.remove('grabbing'); });
+    w.addEventListener('click',handleCanvasClick);
+});
+
+window.addEventListener('load',()=>{
+    updateSwatches();
+    drawCanvasPreview(1);
+    refreshDeptSelect();
+    panX=12; panY=12;
+    applyTransform();
+    setTimeout(zoomFit, 200);
+});
+</script>
+</body>
+</html>
