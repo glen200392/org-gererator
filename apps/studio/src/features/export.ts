@@ -61,7 +61,7 @@ export async function exportPDF(
   // Create PDF in landscape, sized to the image
   const img = new Image();
   img.src = dataUrl;
-  await new Promise((resolve) => { img.onload = resolve; });
+  await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
 
   const pxToMm = 0.264583;
   const width = (img.width / 3) * pxToMm;

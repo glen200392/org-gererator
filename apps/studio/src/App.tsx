@@ -89,10 +89,18 @@ function StudioCanvas() {
   );
 
   // Initial load (try localStorage first)
+  // Initial load — restore from localStorage if available (fix W8)
   useEffect(() => {
     const saved = loadState();
-    if (saved && saved.scenarios.length > 0) {
-      // Restore is handled by store hydration — for now just rebuild
+    if (saved && Array.isArray(saved.scenarios) && saved.scenarios.length > 0) {
+      const state = useOrgStore.getState();
+      // Hydrate store with saved scenarios
+      useOrgStore.setState({
+        scenarios: saved.scenarios as typeof state.scenarios,
+        activeScenarioId: saved.activeScenarioId ?? state.activeScenarioId,
+        layoutDirection: (saved.layoutDirection as typeof state.layoutDirection) ?? state.layoutDirection,
+        lang: (saved.lang as typeof state.lang) ?? state.lang,
+      });
     }
     rebuildFlow();
   }, [rebuildFlow]);

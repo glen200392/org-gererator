@@ -1,7 +1,7 @@
 // Scenario management panel — create, clone, switch, compare
 
 import { useState } from "react";
-import { useOrgStore, type Scenario } from "../store/org-store";
+import { useOrgStore, deepCloneTree, type Scenario } from "../store/org-store";
 import { diffScenarios, type ScenarioDiffResult } from "../features/scenario/diff";
 
 export function ScenarioPanel({ onClose }: { onClose: () => void }) {
@@ -16,11 +16,11 @@ export function ScenarioPanel({ onClose }: { onClose: () => void }) {
     if (!active) return;
     const name = newName.trim() || `${active.name} (copy)`;
     const clone: Scenario = {
-      id: `sc_${Date.now()}`,
+      id: `sc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name,
-      roots: JSON.parse(JSON.stringify(active.roots)),
-      edges: JSON.parse(JSON.stringify(active.edges)),
-      rules: [...active.rules],
+      roots: deepCloneTree(active.roots),
+      edges: active.edges.map((e) => ({ ...e })),
+      rules: active.rules.map((r) => ({ ...r, condition: { ...r.condition, checks: r.condition.checks.map((c) => ({ ...c })) }, action: { ...r.action } })),
     };
     addScenario(clone);
     setNewName("");

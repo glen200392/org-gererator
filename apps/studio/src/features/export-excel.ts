@@ -85,6 +85,16 @@ export async function exportExcel(
 }
 
 /**
+ * Sanitize a CSV cell value to prevent formula injection (fix C3).
+ * Prefixes dangerous characters with a single quote.
+ */
+function sanitizeCSV(value: string): string {
+  const s = String(value).replace(/"/g, '""'); // escape internal quotes (fix W10)
+  if (/^[=+\-@\t\r]/.test(s)) return `"'${s}"`; // prefix with ' to prevent formula
+  return `"${s}"`;
+}
+
+/**
  * Export as SAP SuccessFactors compatible CSV.
  * Format: PositionCode, ParentPosition, Department, Title, IncumbentId, IncumbentName
  * This CSV can be used for SF bulk import or comparison.
@@ -101,17 +111,17 @@ export async function exportSAPCSV(
     const d = node as unknown as Record<string, unknown>;
     const inc = d.incumbent as Record<string, unknown> | null;
     rows.push([
-      node.id,
-      node.parentId,
-      `"${node.dept}"`,
-      `"${d.deptEn ?? ""}"`,
-      `"${node.title}"`,
-      `"${d.titleEn ?? ""}"`,
-      inc?.employeeId ?? "",
-      `"${node.name}"`,
+      sanitizeCSV(node.id),
+      sanitizeCSV(node.parentId),
+      sanitizeCSV(String(node.dept)),
+      sanitizeCSV(String(d.deptEn ?? "")),
+      sanitizeCSV(String(node.title)),
+      sanitizeCSV(String(d.titleEn ?? "")),
+      sanitizeCSV(String(inc?.employeeId ?? "")),
+      sanitizeCSV(String(node.name)),
       d.fte ?? 1,
-      `"${d.costCenter ?? ""}"`,
-      `"${inc?.location ?? ""}"`,
+      sanitizeCSV(String(d.costCenter ?? "")),
+      sanitizeCSV(String(inc?.location ?? "")),
     ].join(","));
     node.children.forEach(walk);
   }

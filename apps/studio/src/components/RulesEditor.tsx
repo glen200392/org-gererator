@@ -65,13 +65,8 @@ export function RulesEditor({ onClose }: { onClose: () => void }) {
 
   function applyRules() {
     const rules = getAllActiveRules();
-    // Update active scenario's rules
-    const state = useOrgStore.getState();
-    const scenario = state.scenarios.find((s) => s.id === state.activeScenarioId);
-    if (scenario) {
-      scenario.rules = rules;
-      state.rebuildFlow();
-    }
+    // Use store action to properly clone + record history (fix C2)
+    useOrgStore.getState().setScenarioRules(rules);
   }
 
   function togglePreset(idx: number) {

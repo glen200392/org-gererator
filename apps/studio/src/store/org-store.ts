@@ -30,7 +30,7 @@ function removeNodeFromParent(node: OrgNode) {
   }
 }
 
-function deepCloneTree(roots: OrgNode[]): OrgNode[] {
+export function deepCloneTree(roots: OrgNode[]): OrgNode[] {
   function cloneNode(n: OrgNode, parent: OrgNode | null): OrgNode {
     const clone: OrgNode = { ...n, parent, children: [] };
     clone.children = n.children.map((c) => cloneNode(c, clone));
@@ -77,6 +77,7 @@ interface OrgState {
   deleteNode: (nodeId: string) => void;
   updateNodeField: (nodeId: string, field: string, value: string) => void;
   addEdge: (fromId: string, toId: string, edgeType: EdgeType) => void;
+  setScenarioRules: (rules: ConditionalRule[]) => void;
 
   // History
   pushHistory: () => void;
@@ -323,6 +324,14 @@ export const useOrgStore = create<OrgState>((set, get) => ({
   },
 
   updateNodeField: (nodeId, field, value) => {
+    // Allowlist of editable fields to prevent overwriting id/children/parent (fix W7)
+    const EDITABLE_FIELDS = new Set([
+      "dept", "deptEn", "name", "nameEn", "title", "titleEn",
+      "roleType", "layoutType", "bgColor", "code", "fte", "grade",
+      "costCenter", "status", "email", "phone", "location",
+      "startDate", "photoUrl", "pageGroup", "sortOrder",
+    ]);
+    if (!EDITABLE_FIELDS.has(field)) return;
     mutateActiveScenario(set, get, (scenario) => {
       const nodesById = buildNodesById(scenario.roots);
       const node = nodesById.get(nodeId);
@@ -347,6 +356,12 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     });
   },
 
+  setScenarioRules: (rules) => {
+    mutateActiveScenario(set, get, (scenario) => {
+      scenario.rules = [...rules.map((r) => ({ ...r }))];
+    });
+  },
+
   // ── History ──
 
   pushHistory: () => {
@@ -363,7 +378,13 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     if (historyIndex <= 0) return;
     const newIndex = historyIndex - 1;
     const snapshot = JSON.parse(history[newIndex]);
-    set({ ...snapshot, historyIndex: newIndex });
+    // Whitelist restored keys to prevent overwriting store functions (fix C1)
+    set((s) => ({
+      ...s,
+      scenarios: snapshot.scenarios,
+      activeScenarioId: snapshot.activeScenarioId,
+      historyIndex: newIndex,
+    }));
     get().rebuildFlow();
   },
 
@@ -372,7 +393,12 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     if (historyIndex >= history.length - 1) return;
     const newIndex = historyIndex + 1;
     const snapshot = JSON.parse(history[newIndex]);
-    set({ ...snapshot, historyIndex: newIndex });
+    set((s) => ({
+      ...s,
+      scenarios: snapshot.scenarios,
+      activeScenarioId: snapshot.activeScenarioId,
+      historyIndex: newIndex,
+    }));
     get().rebuildFlow();
   },
 }));
