@@ -120,10 +120,22 @@ function OrgNodeComponent(props: { data: OrgNodeData; id: string }) {
       ? incumbent.nameEn
       : incumbent?.name ?? "";
 
+  // Drag target visual feedback
+  const dragTarget = data.dragTargetType;
+  const dragBorder = dragTarget === "swap" ? "3px dashed #3B82F6"
+    : dragTarget === "reparent" ? "3px solid #22C55E"
+    : dragTarget === "invalid" ? "3px solid #EF4444"
+    : `${borderWidth}px ${borderStyle} ${borderColor}`;
+  const dragShadow = dragTarget === "swap" ? "0 0 12px rgba(59,130,246,0.5)"
+    : dragTarget === "reparent" ? "0 0 12px rgba(34,197,94,0.5)"
+    : dragTarget === "invalid" ? "0 0 12px rgba(239,68,68,0.5)"
+    : "none";
+
   const nodeStyle: React.CSSProperties = {
     padding: "8px 12px",
     borderRadius: 6,
-    border: `${borderWidth}px ${borderStyle} ${borderColor}`,
+    border: dragBorder,
+    boxShadow: dragShadow,
     background: bgColor,
     color: textColor,
     fontFamily: '"Microsoft JhengHei", "PingFang TC", "Helvetica Neue", sans-serif',
@@ -134,6 +146,7 @@ function OrgNodeComponent(props: { data: OrgNodeData; id: string }) {
     position: "relative",
     cursor: "grab",
     opacity: isVacant ? 0.75 : 1,
+    transition: "border 0.15s, box-shadow 0.15s",
   };
 
   const handleSave = (field: string, value: string) => {
@@ -152,6 +165,27 @@ function OrgNodeComponent(props: { data: OrgNodeData; id: string }) {
       />
 
       <div style={nodeStyle}>
+        {/* Drag target label */}
+        {dragTarget && dragTarget !== "invalid" && (
+          <span style={{
+            position: "absolute", top: -20, left: "50%", transform: "translateX(-50%)",
+            background: dragTarget === "swap" ? "#3B82F6" : "#22C55E",
+            color: "#FFF", fontSize: 10, padding: "1px 8px", borderRadius: 4,
+            fontWeight: "bold", whiteSpace: "nowrap",
+          }}>
+            {dragTarget === "swap" ? "↔ 交換" : "↓ 移入"}
+          </span>
+        )}
+        {dragTarget === "invalid" && (
+          <span style={{
+            position: "absolute", top: -20, left: "50%", transform: "translateX(-50%)",
+            background: "#EF4444", color: "#FFF", fontSize: 10, padding: "1px 8px",
+            borderRadius: 4, fontWeight: "bold",
+          }}>
+            ✕
+          </span>
+        )}
+
         {/* Badge */}
         {action.badge && (
           <span style={{

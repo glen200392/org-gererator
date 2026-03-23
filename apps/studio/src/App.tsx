@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -19,7 +19,6 @@ import { OrgNode } from "@orgchart/react-flow-kit";
 import { useElkLayout } from "@orgchart/react-flow-kit";
 import { useOrgStore } from "./store/org-store";
 import { ContextMenu } from "./components/ContextMenu";
-import { PropertyPanel } from "./components/PropertyPanel";
 import { suggestLayout, analyzeTreeDimensions } from "./features/ai-layout";
 import { isVoiceSupported, createVoiceSession, parseVoiceTranscript } from "./features/voice-input";
 import { RulesEditor } from "./components/RulesEditor";
@@ -36,6 +35,47 @@ import type { OrgFlowNode } from "@orgchart/react-flow-kit";
 const nodeTypes: NodeTypes = {
   orgNode: OrgNode as unknown as NodeTypes["orgNode"],
 };
+
+// ── Drop type detection ──
+
+function detectDropType(
+  dragNodeId: string,
+  targetNodeId: string,
+  flowNodes: OrgFlowNode[],
+): "swap" | "reparent" | "invalid" | null {
+  if (dragNodeId === targetNodeId) return null;
+
+  const dragData = flowNodes.find((n) => n.id === dragNodeId)?.data as Record<string, unknown> | undefined;
+  const targetData = flowNodes.find((n) => n.id === targetNodeId)?.data as Record<string, unknown> | undefined;
+  if (!dragData || !targetData) return null;
+
+  // Build nodesById for cycle detection
+  const nodesById = new Map<string, { id: string; parentId: string; children: { id: string }[] }>();
+  flowNodes.forEach((n) => {
+    const d = n.data as Record<string, unknown>;
+    nodesById.set(n.id, {
+      id: n.id,
+      parentId: String(d.parentId ?? ""),
+      children: (d.children as { id: string }[] | undefined) ?? [],
+    });
+  });
+
+  // Cycle detection: target must not be a descendant of drag
+  const descendants = new Set<string>();
+  function collectDesc(id: string) {
+    descendants.add(id);
+    const node = nodesById.get(id);
+    if (node) node.children.forEach((c) => collectDesc(c.id));
+  }
+  collectDesc(dragNodeId);
+  if (descendants.has(targetNodeId)) return "invalid";
+
+  // Same parent → swap
+  if (dragData.parentId === targetData.parentId) return "swap";
+
+  // Different parent → reparent
+  return "reparent";
+}
 
 function StudioCanvas() {
   const {
@@ -56,18 +96,27 @@ function StudioCanvas() {
     deleteNode,
     updateNodeField,
     addEdge,
+    swapSiblingOrder,
     undo,
     redo,
   } = useOrgStore();
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges);
-  // UI panels state
-  const [, setEdgeCreationMode] = useState(false);
+
+  // UI state
   const [showRulesEditor, setShowRulesEditor] = useState(false);
   const [showScenarioPanel, setShowScenarioPanel] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [pendingConnection, setPendingConnection] = useState<{ source: string; target: string } | null>(null);
+  const [edgeCreationSource, setEdgeCreationSource] = useState<string | null>(null);
+
+  // ── Smart drag state ──
+  const [isDragging, setIsDragging] = useState(false);
+  const [dropTarget, setDropTarget] = useState<{ nodeId: string; type: "swap" | "reparent" | "invalid" } | null>(null);
+  const dragNodeIdRef = useRef<string | null>(null);
+
   const reactFlowInstance = useReactFlow();
 
   const { layoutNodes } = useElkLayout({
@@ -78,22 +127,25 @@ function StudioCanvas() {
     nodeHeight: 90,
   });
 
-  // Inject onUpdate callback into node data
-  const nodesWithCallbacks = useCallback(
+  // Inject callbacks + drag target state into node data
+  const nodesWithState = useCallback(
     (rawNodes: OrgFlowNode[]): OrgFlowNode[] =>
       rawNodes.map((n) => ({
         ...n,
-        data: { ...n.data, onUpdate: updateNodeField },
+        data: {
+          ...n.data,
+          onUpdate: updateNodeField,
+          dragTargetType: dropTarget?.nodeId === n.id ? dropTarget.type : null,
+        },
       })),
-    [updateNodeField],
+    [updateNodeField, dropTarget],
   );
 
-  // Initial load — restore from localStorage if available
+  // ── Initial load ──
   useEffect(() => {
     const saved = loadState();
     if (saved && Array.isArray(saved.scenarios) && saved.scenarios.length > 0) {
       const state = useOrgStore.getState();
-      // Hydrate store with saved scenarios
       useOrgStore.setState({
         scenarios: saved.scenarios as typeof state.scenarios,
         activeScenarioId: saved.activeScenarioId ?? state.activeScenarioId,
@@ -104,7 +156,7 @@ function StudioCanvas() {
     rebuildFlow();
   }, [rebuildFlow]);
 
-  // Auto-save to localStorage on scenario changes
+  // Auto-save
   useEffect(() => {
     const state = useOrgStore.getState();
     saveState({
@@ -113,71 +165,121 @@ function StudioCanvas() {
       layoutDirection: state.layoutDirection,
       lang: state.lang,
     });
-  }, [storeNodes]); // triggers whenever flow rebuilds
+  }, [storeNodes]);
 
-  // Sync store → local state + ELK layout
+  // Sync store → ELK layout (SKIP during drag)
   useEffect(() => {
-    if (storeNodes.length === 0) return;
+    if (storeNodes.length === 0 || isDragging) return;
     layoutNodes(storeNodes, storeEdges).then((laid) => {
-      setNodes(nodesWithCallbacks(laid));
+      setNodes(nodesWithState(laid));
       setEdges(storeEdges);
     });
-  }, [storeNodes, storeEdges, layoutNodes, setNodes, setEdges, nodesWithCallbacks]);
+  }, [storeNodes, storeEdges, layoutNodes, setNodes, setEdges, nodesWithState, isDragging]);
 
   // Re-layout on direction change
   useEffect(() => {
-    if (nodes.length === 0) return;
+    if (nodes.length === 0 || isDragging) return;
     layoutNodes(nodes as OrgFlowNode[], edges).then((laid) =>
-      setNodes(nodesWithCallbacks(laid)),
+      setNodes(nodesWithState(laid)),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutDirection]);
 
-  // ── Event handlers ──
+  // Update drag target visuals when dropTarget changes (during drag)
+  useEffect(() => {
+    if (!isDragging) return;
+    setNodes((prev) =>
+      prev.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          dragTargetType: dropTarget?.nodeId === n.id ? dropTarget.type : null,
+        },
+      })),
+    );
+  }, [dropTarget, isDragging, setNodes]);
 
-  // Click node → select
+  // ── Smart Drag Handlers ──
+
+  const onNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
+    setIsDragging(true);
+    dragNodeIdRef.current = node.id;
+    setDropTarget(null);
+  }, []);
+
+  const onNodeDrag = useCallback((_: React.MouseEvent, node: Node) => {
+    const intersecting = reactFlowInstance.getIntersectingNodes(node);
+    const target = intersecting.find((n) => n.id !== node.id);
+
+    if (!target || !dragNodeIdRef.current) {
+      setDropTarget(null);
+      return;
+    }
+
+    const type = detectDropType(dragNodeIdRef.current, target.id, nodes as OrgFlowNode[]);
+    if (type) {
+      setDropTarget({ nodeId: target.id, type });
+    } else {
+      setDropTarget(null);
+    }
+  }, [reactFlowInstance, nodes]);
+
+  const onNodeDragStop = useCallback((_: React.MouseEvent, _node: Node) => {
+    const dragId = dragNodeIdRef.current;
+    const target = dropTarget;
+
+    // Clear drag state
+    setIsDragging(false);
+    setDropTarget(null);
+    dragNodeIdRef.current = null;
+
+    if (!dragId || !target) return; // Dropped on empty space
+
+    if (target.type === "invalid") return; // Invalid target (cycle)
+
+    if (target.type === "swap") {
+      swapSiblingOrder(dragId, target.nodeId);
+      return;
+    }
+
+    if (target.type === "reparent") {
+      const dragData = (nodes as OrgFlowNode[]).find((n) => n.id === dragId)?.data as Record<string, unknown> | undefined;
+      const targetData = (nodes as OrgFlowNode[]).find((n) => n.id === target.nodeId)?.data as Record<string, unknown> | undefined;
+      const msg = lang === "tw"
+        ? `確定將「${dragData?.dept ?? dragId}」移到「${targetData?.dept ?? target.nodeId}」下方？`
+        : `Move "${dragData?.dept ?? dragId}" under "${targetData?.dept ?? target.nodeId}"?`;
+      setConfirmDialog({ message: msg, onConfirm: () => reparentNode(dragId, target.nodeId) });
+    }
+  }, [dropTarget, nodes, lang, swapSiblingOrder, reparentNode]);
+
+  // ── Click handlers ──
+
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    // Edge creation mode: clicking a node creates the edge
+    if (edgeCreationSource) {
+      if (edgeCreationSource !== node.id) {
+        setPendingConnection({ source: edgeCreationSource, target: node.id });
+      }
+      setEdgeCreationSource(null);
+      return;
+    }
     selectNode(node.id);
     closeContextMenu();
-  }, [selectNode, closeContextMenu]);
+  }, [selectNode, closeContextMenu, edgeCreationSource]);
 
-  // Click pane → deselect
   const onPaneClick = useCallback(() => {
     selectNode(null);
     closeContextMenu();
+    setEdgeCreationSource(null);
   }, [selectNode, closeContextMenu]);
 
-  // Right-click node → context menu
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     event.preventDefault();
     openContextMenu(node.id, event.clientX, event.clientY);
   }, [openContextMenu]);
 
-  // Drag stop → detect re-parent target
-  const onNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
-    const intersecting = reactFlowInstance.getIntersectingNodes(node);
-    const target = intersecting.find((n) => n.id !== node.id);
-    if (!target) return;
-
-    // Check if this is a meaningful move (not to current parent)
-    const nodeData = node.data as Record<string, unknown>;
-    if (target.id === nodeData?.parentId) return;
-
-    const msg = lang === "tw"
-      ? `確定將「${nodeData?.dept ?? node.id}」移到「${(target.data as Record<string, unknown>)?.dept ?? target.id}」下方？`
-      : `Move "${nodeData?.dept ?? node.id}" under "${(target.data as Record<string, unknown>)?.dept ?? target.id}"?`;
-    const capturedNodeId = node.id;
-    const capturedTargetId = target.id;
-    setConfirmDialog({ message: msg, onConfirm: () => reparentNode(capturedNodeId, capturedTargetId) });
-  }, [reactFlowInstance, reparentNode, lang]);
-
-  // Connect handle → create edge
-  // Connect handle → show edge type selector
-  const [pendingConnection, setPendingConnection] = useState<{ source: string; target: string } | null>(null);
-
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
-    // Store pending connection and show type selector
     setPendingConnection({ source: connection.source, target: connection.target });
   }, []);
 
@@ -193,6 +295,7 @@ function StudioCanvas() {
     function handleKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
+      if (e.key === "Escape") { setEdgeCreationSource(null); setPendingConnection(null); }
       if (e.key === "Delete" || e.key === "Backspace") {
         const sel = useOrgStore.getState().selectedNodeId;
         if (sel && document.activeElement?.tagName !== "INPUT") {
@@ -220,33 +323,26 @@ function StudioCanvas() {
         <strong style={{ fontSize: 16, color: "#64FFDA" }}>OrgChart Studio</strong>
         <span style={{ color: "#334155" }}>|</span>
 
-        {/* Layout */}
         {(["vertical", "horizontal", "compact"] as LayoutDirection[]).map((dir) => (
           <button
             key={dir}
             onClick={() => setLayoutDirection(dir)}
-            style={{
-              ...btnStyle,
-              background: layoutDirection === dir ? "#1E40AF" : "#1E293B",
-            }}
+            style={{ ...btnStyle, background: layoutDirection === dir ? "#1E40AF" : "#1E293B" }}
           >
             {dir === "vertical" ? "↕ 垂直" : dir === "horizontal" ? "↔ 水平" : "▣ 緊密"}
           </button>
         ))}
         <span style={{ color: "#334155" }}>|</span>
 
-        {/* Language */}
         <button onClick={() => setLang(lang === "tw" ? "en" : "tw")} style={btnStyle}>
           {lang === "tw" ? "EN" : "繁中"}
         </button>
         <span style={{ color: "#334155" }}>|</span>
 
-        {/* Undo/Redo */}
         <button onClick={undo} style={btnStyle} title="Undo (Ctrl+Z)">↩</button>
         <button onClick={redo} style={btnStyle} title="Redo (Ctrl+Y)">↪</button>
         <span style={{ color: "#334155" }}>|</span>
 
-        {/* AI Layout */}
         <button
           onClick={() => {
             const scenario = useOrgStore.getState().scenarios.find(
@@ -256,102 +352,52 @@ function StudioCanvas() {
             const dims = analyzeTreeDimensions(scenario.roots);
             const suggestion = suggestLayout(dims.nodeCount, dims.maxDepth, dims.maxBreadth);
             setLayoutDirection(suggestion.direction);
-            alert(lang === "tw" ? `🤖 ${suggestion.reason}` : `🤖 ${suggestion.reasonEn}`);
           }}
           style={{ ...btnStyle, background: "#065F46", borderColor: "#10B981" }}
-          title="AI auto-layout suggestion"
+          title="AI auto-layout"
         >
           🤖 {lang === "tw" ? "AI 排版" : "AI Layout"}
         </button>
 
-        {/* Voice Input */}
-        {isVoiceSupported && (
-          <VoiceButton lang={lang} />
-        )}
+        {isVoiceSupported && <VoiceButton lang={lang} />}
         <span style={{ color: "#334155" }}>|</span>
 
-        {/* Rules Editor */}
-        <button
-          onClick={() => setShowRulesEditor((v) => !v)}
-          style={btnStyle}
-        >
+        <button onClick={() => setShowRulesEditor((v) => !v)} style={btnStyle}>
           📐 {lang === "tw" ? "規則" : "Rules"}
         </button>
 
-        {/* Export */}
-        <button
-          onClick={async () => {
-            const el = getFlowViewport();
-            if (el) await exportPNG(el);
-          }}
-          style={btnStyle}
-          title="Export PNG"
-        >
-          🖼️ PNG
-        </button>
-        <button
-          onClick={async () => {
-            const el = getFlowViewport();
-            if (el) await exportPDF(el);
-          }}
-          style={btnStyle}
-          title="Export PDF"
-        >
-          📄 PDF
-        </button>
-        <button
-          onClick={async () => {
-            const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId);
-            if (sc) await exportPPTX(sc.roots, sc.edges, sc.name);
-          }}
-          style={btnStyle}
-          title="Export editable PPTX"
-        >
-          ⬇️ PPTX
-        </button>
-        <button
-          onClick={async () => {
-            const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId);
-            if (sc) await exportExcel(sc.roots, sc.edges);
-          }}
-          style={btnStyle}
-          title="Export V2 Excel Workbook"
-        >
-          📊 Excel
-        </button>
-        <button
-          onClick={async () => {
-            const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId);
-            if (sc) await exportSAPCSV(sc.roots);
-          }}
-          style={btnStyle}
-          title="Export SAP-compatible CSV"
-        >
-          📋 SAP CSV
-        </button>
+        <button onClick={async () => { const el = getFlowViewport(); if (el) await exportPNG(el); }} style={btnStyle}>🖼️ PNG</button>
+        <button onClick={async () => { const el = getFlowViewport(); if (el) await exportPDF(el); }} style={btnStyle}>📄 PDF</button>
+        <button onClick={async () => { const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId); if (sc) await exportPPTX(sc.roots, sc.edges, sc.name); }} style={btnStyle}>⬇️ PPTX</button>
+        <button onClick={async () => { const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId); if (sc) await exportExcel(sc.roots, sc.edges); }} style={btnStyle}>📊 Excel</button>
+        <button onClick={async () => { const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId); if (sc) await exportSAPCSV(sc.roots); }} style={btnStyle}>📋 SAP</button>
         <span style={{ color: "#334155" }}>|</span>
 
-        {/* Scenario Panel Toggle */}
         <button onClick={() => setShowScenarioPanel(v => !v)} style={btnStyle}>
           🗂️ {lang === "tw" ? "方案" : "Scenario"}
         </button>
 
-        {/* Search */}
         <input
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder={lang === "tw" ? "🔍 搜尋..." : "🔍 Search..."}
-          style={{
-            padding: "4px 8px", borderRadius: 4, border: "1px solid #334155",
-            background: "#0F172A", color: "#E2E8F0", fontSize: 12, width: 120,
-          }}
+          style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #334155", background: "#0F172A", color: "#E2E8F0", fontSize: 12, width: 120 }}
         />
 
         <div style={{ flex: 1 }} />
-        <span style={{ color: "#475569", fontSize: 11 }}>
-          {nodes.length} nodes
-        </span>
+        <span style={{ color: "#475569", fontSize: 11 }}>{nodes.length} nodes</span>
       </div>
+
+      {/* Edge creation mode banner */}
+      {edgeCreationSource && (
+        <div style={{
+          background: "#7C3AED", color: "#FFF", padding: "6px 16px", fontSize: 13,
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <span>🔗 {lang === "tw" ? "點擊目標節點建立虛線關係（Escape 取消）" : "Click target node to create edge (Escape to cancel)"}</span>
+          <button onClick={() => setEdgeCreationSource(null)} style={{ background: "none", border: "none", color: "#FFF", cursor: "pointer", fontSize: 14 }}>✕</button>
+        </div>
+      )}
 
       {/* React Flow Canvas */}
       <div style={{ flex: 1 }}>
@@ -363,6 +409,8 @@ function StudioCanvas() {
           nodeTypes={nodeTypes}
           onNodeClick={onNodeClick}
           onNodeContextMenu={onNodeContextMenu}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           onConnect={onConnect}
           onPaneClick={onPaneClick}
@@ -374,11 +422,7 @@ function StudioCanvas() {
           deleteKeyCode={null}
         >
           <Controls position="bottom-right" />
-          <MiniMap
-            nodeStrokeColor="#64FFDA"
-            nodeColor="#0A192F"
-            style={{ background: "#1E293B" }}
-          />
+          <MiniMap nodeStrokeColor="#64FFDA" nodeColor="#0A192F" style={{ background: "#1E293B" }} />
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#334155" />
         </ReactFlow>
       </div>
@@ -399,22 +443,15 @@ function StudioCanvas() {
               onConfirm: () => deleteNode(capturedId),
             });
           }}
-          onCreateEdge={() => setEdgeCreationMode(true)}
+          onCreateEdge={() => { setEdgeCreationSource(contextMenu.nodeId); closeContextMenu(); }}
         />
       )}
 
-      {/* Property Panel (slides in from right when node selected) */}
-      {!showRulesEditor && <PropertyPanel />}
-
-      {/* Rules Editor Panel */}
-      {showRulesEditor && (
-        <RulesEditor onClose={() => setShowRulesEditor(false)} />
-      )}
+      {/* Rules Editor (right side) */}
+      {showRulesEditor && <RulesEditor onClose={() => setShowRulesEditor(false)} />}
 
       {/* Scenario Panel (left side) */}
-      {showScenarioPanel && (
-        <ScenarioPanel onClose={() => setShowScenarioPanel(false)} />
-      )}
+      {showScenarioPanel && <ScenarioPanel onClose={() => setShowScenarioPanel(false)} />}
 
       {/* Confirm Dialog */}
       {confirmDialog && (
@@ -428,7 +465,7 @@ function StudioCanvas() {
         />
       )}
 
-      {/* Edge Type Selector (shown after connecting two nodes) */}
+      {/* Edge Type Selector */}
       {pendingConnection && (
         <EdgeTypeSelector
           x={window.innerWidth / 2 - 100}
@@ -441,7 +478,7 @@ function StudioCanvas() {
   );
 }
 
-// ── Voice Button Component ──
+// ── Voice Button ──
 
 function VoiceButton({ lang }: { lang: "tw" | "en" }) {
   const [listening, setListening] = useState(false);
@@ -462,12 +499,10 @@ function VoiceButton({ lang }: { lang: "tw" | "en" }) {
             const parentId = selectedNodeId ?? useOrgStore.getState().flowNodes[0]?.id;
             if (parentId) {
               addChildNode(parentId);
-              // Find the just-created node (last in flow) and update its fields
               setTimeout(() => {
                 const state = useOrgStore.getState();
                 const scenario = state.scenarios.find((s) => s.id === state.activeScenarioId);
                 if (!scenario) return;
-                // Find the newest node (highest counter)
                 const allIds: string[] = [];
                 function collect(n: { id: string; children: { id: string }[] }) {
                   allIds.push(n.id);
@@ -495,26 +530,16 @@ function VoiceButton({ lang }: { lang: "tw" | "en" }) {
   }, [listening, lang, selectedNodeId, addChildNode, updateNodeField]);
 
   return (
-    <>
-      <button
-        onClick={handleVoice}
-        style={{
-          ...btnStyleGlobal,
-          background: listening ? "#DC2626" : "#1E293B",
-          borderColor: listening ? "#F87171" : "#334155",
-        }}
-        title={lang === "tw" ? "語音輸入（說：部門 姓名 職稱）" : "Voice input (say: Dept Name Title)"}
-      >
-        🎤 {listening
-          ? (transcript || (lang === "tw" ? "聆聽中..." : "Listening..."))
-          : (lang === "tw" ? "語音" : "Voice")
-        }
-      </button>
-    </>
+    <button
+      onClick={handleVoice}
+      style={{ ...btnStyle, background: listening ? "#DC2626" : "#1E293B", borderColor: listening ? "#F87171" : "#334155" }}
+      title={lang === "tw" ? "語音輸入（說：部門 姓名 職稱）" : "Voice input (say: Dept Name Title)"}
+    >
+      🎤 {listening ? (transcript || (lang === "tw" ? "聆聽中..." : "Listening...")) : (lang === "tw" ? "語音" : "Voice")}
+    </button>
   );
 }
 
-// Wrap with ReactFlowProvider for useReactFlow hook
 export default function App() {
   return (
     <ReactFlowProvider>
@@ -527,5 +552,3 @@ const btnStyle: React.CSSProperties = {
   padding: "4px 10px", borderRadius: 4, border: "1px solid #334155",
   background: "#1E293B", color: "#E2E8F0", cursor: "pointer", fontSize: 12,
 };
-
-const btnStyleGlobal = btnStyle;

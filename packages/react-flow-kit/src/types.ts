@@ -13,6 +13,8 @@ export type OrgNodeData = {
   lang?: "tw" | "en";
   /** Callback when a field is edited inline */
   onUpdate?: (nodeId: string, field: string, value: string) => void;
+  /** Drag target visual state */
+  dragTargetType?: "swap" | "reparent" | "invalid" | null;
   [key: string]: unknown;
 } & OrgPosition;
 

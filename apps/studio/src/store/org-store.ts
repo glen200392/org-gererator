@@ -77,6 +77,7 @@ interface OrgState {
   deleteNode: (nodeId: string) => void;
   updateNodeField: (nodeId: string, field: string, value: string) => void;
   addEdge: (fromId: string, toId: string, edgeType: EdgeType) => void;
+  swapSiblingOrder: (nodeIdA: string, nodeIdB: string) => void;
   setScenarioRules: (rules: ConditionalRule[]) => void;
 
   // History
@@ -355,6 +356,26 @@ export const useOrgStore = create<OrgState>((set, get) => ({
         showInOverview: true,
         showInDetail: true,
       });
+    });
+  },
+
+  swapSiblingOrder: (nodeIdA, nodeIdB) => {
+    mutateActiveScenario(set, get, (scenario) => {
+      const nodesById = buildNodesById(scenario.roots);
+      const nodeA = nodesById.get(nodeIdA);
+      const nodeB = nodesById.get(nodeIdB);
+      if (!nodeA || !nodeB) return;
+      // Must share the same parent
+      if (nodeA.parentId !== nodeB.parentId) return;
+      const parent = nodeA.parent;
+      if (!parent) return; // both are roots — swap root order
+      const idxA = parent.children.findIndex((c) => c.id === nodeIdA);
+      const idxB = parent.children.findIndex((c) => c.id === nodeIdB);
+      if (idxA < 0 || idxB < 0) return;
+      // Swap positions in children array
+      [parent.children[idxA], parent.children[idxB]] = [parent.children[idxB], parent.children[idxA]];
+      // Update sortOrder to reflect new positions
+      parent.children.forEach((c, i) => { c.sortOrder = i * 10; });
     });
   },
 
