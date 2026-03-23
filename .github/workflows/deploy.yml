@@ -37,10 +37,10 @@ jobs:
         run: pnpm --filter @orgchart/core build
 
       - name: Build Studio
-        run: pnpm --filter @orgchart/studio build -- --base=/org-generator/studio/
+        run: cd apps/studio && npx vite build --base=/org-generator/studio/
 
       - name: Build SAP Edition
-        run: pnpm --filter @orgchart/sap-edition build -- --base=/org-generator/sap/
+        run: cd apps/sap-edition && npx vite build --base=/org-generator/sap/
 
       - name: Assemble Pages output
         run: |
