@@ -88,8 +88,7 @@ function StudioCanvas() {
     [updateNodeField],
   );
 
-  // Initial load (try localStorage first)
-  // Initial load — restore from localStorage if available (fix W8)
+  // Initial load — restore from localStorage if available
   useEffect(() => {
     const saved = loadState();
     if (saved && Array.isArray(saved.scenarios) && saved.scenarios.length > 0) {

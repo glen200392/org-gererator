@@ -8,9 +8,10 @@ import {
   BASE_CARD_W,
   BASE_CARD_H,
   BASE_GAP_Y,
+  getPptTC,
+  findNodeById,
 } from "@orgchart/core";
-import { getPptTC } from "@orgchart/core";
-import { findNodeById } from "@orgchart/core";
+import { deepCloneTree } from "../store/org-store";
 
 /**
  * Export org chart as editable PPTX using PptxGenJS shapes.
@@ -26,13 +27,8 @@ export async function exportPPTX(
   const pres = new PptxGenJS();
   pres.layout = "LAYOUT_16x9";
 
-  // Clone tree preserving parent refs (fix W5 — JSON.stringify loses circular refs)
-  function cloneNode(n: OrgNode, parent: OrgNode | null): OrgNode {
-    const c: OrgNode = { ...n, parent, children: [] };
-    c.children = n.children.map((ch) => cloneNode(ch, c));
-    return c;
-  }
-  const cloned = roots.map((r) => cloneNode(r, null));
+  // Clone tree preserving parent refs (reuse shared deepCloneTree)
+  const cloned = deepCloneTree(roots);
   applyRoleLayoutAdjustments(cloned);
   const li = calculateLayout(cloned, 999);
 

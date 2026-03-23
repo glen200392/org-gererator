@@ -112,6 +112,15 @@ function mutateActiveScenario(
 
 // ── Default node factory ──
 
+// Allowlist of editable node fields (module-scope for performance)
+const EDITABLE_FIELDS = new Set([
+  "dept", "deptEn", "name", "nameEn", "title", "titleEn",
+  "roleType", "layoutType", "bgColor", "code", "fte", "grade",
+  "costCenter", "status", "email", "phone", "location",
+  "startDate", "photoUrl", "pageGroup", "sortOrder",
+  "rr", "rrEn",
+]);
+
 let nodeCounter = 100;
 function createDefaultNode(parentId: string, lang: "tw" | "en"): OrgNode {
   const id = `N_${Date.now()}_${++nodeCounter}`;
@@ -324,13 +333,6 @@ export const useOrgStore = create<OrgState>((set, get) => ({
   },
 
   updateNodeField: (nodeId, field, value) => {
-    // Allowlist of editable fields to prevent overwriting id/children/parent (fix W7)
-    const EDITABLE_FIELDS = new Set([
-      "dept", "deptEn", "name", "nameEn", "title", "titleEn",
-      "roleType", "layoutType", "bgColor", "code", "fte", "grade",
-      "costCenter", "status", "email", "phone", "location",
-      "startDate", "photoUrl", "pageGroup", "sortOrder",
-    ]);
     if (!EDITABLE_FIELDS.has(field)) return;
     mutateActiveScenario(set, get, (scenario) => {
       const nodesById = buildNodesById(scenario.roots);
@@ -358,7 +360,11 @@ export const useOrgStore = create<OrgState>((set, get) => ({
 
   setScenarioRules: (rules) => {
     mutateActiveScenario(set, get, (scenario) => {
-      scenario.rules = [...rules.map((r) => ({ ...r }))];
+      scenario.rules = rules.map((r) => ({
+        ...r,
+        condition: { ...r.condition, checks: r.condition.checks.map((c) => ({ ...c })) },
+        action: { ...r.action },
+      }));
     });
   },
 

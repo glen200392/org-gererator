@@ -85,8 +85,10 @@ export async function exportExcel(
 }
 
 /**
- * Sanitize a CSV cell value to prevent formula injection (fix C3).
- * Prefixes dangerous characters with a single quote.
+ * Sanitize a CSV cell value to prevent formula injection.
+ * Prefixes dangerous characters (=, +, -, @, tab, CR) with a single quote.
+ * Note: The ' prefix means SAP re-import may need to strip it.
+ * This is intentional — the CSV is for review/comparison, not round-trip.
  */
 function sanitizeCSV(value: string): string {
   const s = String(value).replace(/"/g, '""'); // escape internal quotes (fix W10)
