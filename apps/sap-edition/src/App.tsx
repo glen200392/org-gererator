@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import type { OrgPosition, OrgEdge, OrgModel } from "@orgchart/core";
 import {
   calculateLayout,
   applyRoleLayoutAdjustments,
   renderToCanvas,
   calculateMetrics,
+  createVacancyHighlightRule,
+  createMissingEmailRule,
+  evaluateRules,
   THEMES,
 } from "@orgchart/core";
 import { mapSFToOrgChart } from "./api/sf-mapper";
@@ -24,6 +27,8 @@ export default function App() {
   const [lang, setLang] = useState<"tw" | "en">("tw");
   const [theme, setTheme] = useState("blue");
   const [syncStatus, setSyncStatus] = useState("idle");
+  const [view, setView] = useState<"chart" | "list">("chart");
+  const [search, setSearch] = useState("");
 
   // Load mock data on mount
   useEffect(() => {
@@ -77,8 +82,26 @@ export default function App() {
   // Calculate metrics for root
   const rootMetrics = roots.length > 0 ? calculateMetrics(roots[0]) : null;
 
-  // Conditional formatting rules — will be used for data integrity visualization
-  // const rules = [createVacancyHighlightRule(), createMissingEmailRule()];
+  // Conditional formatting rules for data integrity
+  const rules = useMemo(() => [createVacancyHighlightRule(), createMissingEmailRule()], []);
+
+  // Flatten tree for list view
+  const flatNodes = useMemo(() => {
+    const list: OrgPosition[] = [];
+    function walk(n: OrgPosition) { list.push(n); (n.children as OrgPosition[]).forEach(walk); }
+    roots.forEach(walk);
+    return list;
+  }, [roots]);
+
+  // Filtered list for search
+  const filteredNodes = useMemo(() => {
+    if (!search.trim()) return flatNodes;
+    const q = search.toLowerCase();
+    return flatNodes.filter((n) =>
+      n.dept.toLowerCase().includes(q) || n.name.toLowerCase().includes(q) ||
+      n.title.toLowerCase().includes(q) || (n.code ?? "").toLowerCase().includes(q),
+    );
+  }, [flatNodes, search]);
 
   return (
     <div style={{ fontFamily: '"Microsoft JhengHei", "PingFang TC", sans-serif', background: "#F0F2F5", minHeight: "100vh" }}>
@@ -132,15 +155,90 @@ export default function App() {
         </div>
       )}
 
-      {/* Canvas preview */}
-      <div style={{ padding: "0 20px 20px", overflow: "auto" }}>
-        <div style={{
-          background: "#FFF", borderRadius: 8, border: "1px solid #E2E8F0",
-          padding: 16, overflow: "auto", maxHeight: "70vh",
-        }}>
-          <canvas ref={canvasRef} style={{ display: "block" }} />
-        </div>
+      {/* View toggle + search */}
+      <div style={{ display: "flex", gap: 8, padding: "0 20px 8px", alignItems: "center" }}>
+        <button onClick={() => setView("chart")} style={{ ...btnStyle, background: view === "chart" ? "#0F766E" : "#1E293B" }}>
+          📊 {lang === "en" ? "Chart" : "圖表"}
+        </button>
+        <button onClick={() => setView("list")} style={{ ...btnStyle, background: view === "list" ? "#0F766E" : "#1E293B" }}>
+          📋 {lang === "en" ? "List" : "列表"}
+        </button>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={lang === "en" ? "Search..." : "搜尋..."}
+          style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #CBD5E1", fontSize: 12, flex: 1, maxWidth: 250 }}
+        />
+        <span style={{ fontSize: 11, color: "#64748B" }}>
+          {filteredNodes.length} / {flatNodes.length} {lang === "en" ? "positions" : "職位"}
+        </span>
       </div>
+
+      {/* Chart view */}
+      {view === "chart" && (
+        <div style={{ padding: "0 20px 20px", overflow: "auto" }}>
+          <div style={{
+            background: "#FFF", borderRadius: 8, border: "1px solid #E2E8F0",
+            padding: 16, overflow: "auto", maxHeight: "70vh",
+          }}>
+            <canvas ref={canvasRef} style={{ display: "block" }} />
+          </div>
+        </div>
+      )}
+
+      {/* List view */}
+      {view === "list" && (
+        <div style={{ padding: "0 20px 20px" }}>
+          <div style={{ background: "#FFF", borderRadius: 8, border: "1px solid #E2E8F0", overflow: "auto", maxHeight: "70vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#F8FAFC", borderBottom: "2px solid #E2E8F0" }}>
+                  {[
+                    lang === "en" ? "Code" : "代碼",
+                    lang === "en" ? "Dept" : "部門",
+                    lang === "en" ? "Title" : "職稱",
+                    lang === "en" ? "Name" : "姓名",
+                    lang === "en" ? "Email" : "信箱",
+                    lang === "en" ? "Location" : "地點",
+                    "FTE",
+                    lang === "en" ? "Status" : "狀態",
+                  ].map((h) => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#334155", fontWeight: "bold" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredNodes.map((node) => {
+                  const action = evaluateRules(node, rules);
+                  const rowStyle: React.CSSProperties = action.borderColor
+                    ? { borderLeft: `3px solid ${action.borderColor}` }
+                    : {};
+                  return (
+                    <tr key={node.id} style={{ borderBottom: "1px solid #F1F5F9", ...rowStyle }}>
+                      <td style={tdStyle}>{node.code || "—"}</td>
+                      <td style={tdStyle}>{lang === "en" && node.deptEn ? node.deptEn : node.dept}</td>
+                      <td style={tdStyle}>{lang === "en" && node.titleEn ? node.titleEn : node.title}</td>
+                      <td style={tdStyle}>
+                        {node.incumbent ? (
+                          lang === "en" && node.incumbent.nameEn ? node.incumbent.nameEn : node.incumbent.name
+                        ) : (
+                          <span style={{ color: "#DC2626", fontStyle: "italic" }}>
+                            {action.badge ?? (lang === "en" ? "Vacant" : "空缺")}
+                          </span>
+                        )}
+                      </td>
+                      <td style={tdStyle}>{node.incumbent?.email || <span style={{ color: "#F59E0B" }}>—</span>}</td>
+                      <td style={tdStyle}>{node.incumbent?.location || "—"}</td>
+                      <td style={tdStyle}>{node.fte}</td>
+                      <td style={tdStyle}>{node.status || "active"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Sync status */}
       <div style={{ padding: "8px 20px", fontSize: 11, color: "#64748B" }}>
@@ -153,4 +251,8 @@ export default function App() {
 const btnStyle: React.CSSProperties = {
   padding: "4px 12px", borderRadius: 4, border: "1px solid #334155",
   background: "#1E293B", color: "#E2E8F0", cursor: "pointer", fontSize: 12,
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: "6px 10px", color: "#1E293B",
 };

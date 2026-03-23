@@ -23,7 +23,11 @@ import { PropertyPanel } from "./components/PropertyPanel";
 import { suggestLayout, analyzeTreeDimensions } from "./features/ai-layout";
 import { isVoiceSupported, createVoiceSession, parseVoiceTranscript } from "./features/voice-input";
 import { RulesEditor } from "./components/RulesEditor";
+import { ScenarioPanel } from "./components/ScenarioPanel";
 import { exportPNG, exportPDF, getFlowViewport } from "./features/export";
+import { exportPPTX } from "./features/export-pptx";
+import { exportExcel, exportSAPCSV } from "./features/export-excel";
+import { saveState, loadState } from "./features/persistence";
 import type { LayoutDirection, EdgeType } from "@orgchart/core";
 import type { OrgFlowNode } from "@orgchart/react-flow-kit";
 
@@ -56,9 +60,11 @@ function StudioCanvas() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges);
-  // Edge creation mode — activated from context menu "建立虛線關係"
+  // UI panels state
   const [, setEdgeCreationMode] = useState(false);
   const [showRulesEditor, setShowRulesEditor] = useState(false);
+  const [showScenarioPanel, setShowScenarioPanel] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const reactFlowInstance = useReactFlow();
 
   const { layoutNodes } = useElkLayout({
@@ -79,10 +85,25 @@ function StudioCanvas() {
     [updateNodeField],
   );
 
-  // Initial load
+  // Initial load (try localStorage first)
   useEffect(() => {
+    const saved = loadState();
+    if (saved && saved.scenarios.length > 0) {
+      // Restore is handled by store hydration — for now just rebuild
+    }
     rebuildFlow();
   }, [rebuildFlow]);
+
+  // Auto-save to localStorage on scenario changes
+  useEffect(() => {
+    const state = useOrgStore.getState();
+    saveState({
+      scenarios: state.scenarios,
+      activeScenarioId: state.activeScenarioId,
+      layoutDirection: state.layoutDirection,
+      lang: state.lang,
+    });
+  }, [storeNodes]); // triggers whenever flow rebuilds
 
   // Sync store → local state + ELK layout
   useEffect(() => {
@@ -257,10 +278,57 @@ function StudioCanvas() {
         >
           📄 PDF
         </button>
+        <button
+          onClick={async () => {
+            const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId);
+            if (sc) await exportPPTX(sc.roots, sc.edges, sc.name);
+          }}
+          style={btnStyle}
+          title="Export editable PPTX"
+        >
+          ⬇️ PPTX
+        </button>
+        <button
+          onClick={async () => {
+            const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId);
+            if (sc) await exportExcel(sc.roots, sc.edges);
+          }}
+          style={btnStyle}
+          title="Export V2 Excel Workbook"
+        >
+          📊 Excel
+        </button>
+        <button
+          onClick={async () => {
+            const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId);
+            if (sc) await exportSAPCSV(sc.roots);
+          }}
+          style={btnStyle}
+          title="Export SAP-compatible CSV"
+        >
+          📋 SAP CSV
+        </button>
+        <span style={{ color: "#334155" }}>|</span>
+
+        {/* Scenario Panel Toggle */}
+        <button onClick={() => setShowScenarioPanel(v => !v)} style={btnStyle}>
+          🗂️ {lang === "tw" ? "方案" : "Scenario"}
+        </button>
+
+        {/* Search */}
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={lang === "tw" ? "🔍 搜尋..." : "🔍 Search..."}
+          style={{
+            padding: "4px 8px", borderRadius: 4, border: "1px solid #334155",
+            background: "#0F172A", color: "#E2E8F0", fontSize: 12, width: 120,
+          }}
+        />
 
         <div style={{ flex: 1 }} />
         <span style={{ color: "#475569", fontSize: 11 }}>
-          {nodes.length} nodes · {lang === "tw" ? "右鍵操作 · 雙擊編輯 · 拖曳重組" : "Right-click · Double-click edit · Drag to reparent"}
+          {nodes.length} nodes
         </span>
       </div>
 
@@ -318,6 +386,11 @@ function StudioCanvas() {
       {/* Rules Editor Panel */}
       {showRulesEditor && (
         <RulesEditor onClose={() => setShowRulesEditor(false)} />
+      )}
+
+      {/* Scenario Panel (left side) */}
+      {showScenarioPanel && (
+        <ScenarioPanel onClose={() => setShowScenarioPanel(false)} />
       )}
     </div>
   );

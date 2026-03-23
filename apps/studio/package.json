@@ -18,8 +18,10 @@
     "elkjs": "^0.9.0",
     "html-to-image": "1.11.11",
     "jspdf": "2.5.1",
+    "pptxgenjs": "3.12.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "xlsx": "0.18.5",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
