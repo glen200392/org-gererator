@@ -1,20 +1,23 @@
 // Search state application — pure function
 // Extracted from index.html L2417-2448
 
-import type { OrgNode, OrgModel } from "./types";
+import type { OrgNode } from "./types";
 
 export interface SearchResult {
   matchIds: Set<string>;
+  /** Ordered array of matched node IDs (tree-walk order) for navigation */
+  matchIdList: string[];
   contextIds: Set<string>;
   firstMatchId: string | null;
 }
 
 /**
- * Apply search state to a model's tree, setting searchMatched/searchHasMatch
+ * Apply search state to a tree, setting searchMatched/searchHasMatch
  * on each node. Returns the set of match IDs and context IDs.
+ * Accepts any object with a `roots` array (full OrgModel or partial).
  */
 export function applySearchState(
-  model: OrgModel,
+  model: { roots: OrgNode[] },
   query: string,
 ): SearchResult {
   const matchIds = new Set<string>();
@@ -48,5 +51,7 @@ export function applySearchState(
   }
 
   model.roots.forEach(walk);
-  return { matchIds, contextIds, firstMatchId };
+  // matchIdList preserves tree-walk (depth-first) order for sequential navigation
+  const matchIdList = Array.from(matchIds);
+  return { matchIds, matchIdList, contextIds, firstMatchId };
 }

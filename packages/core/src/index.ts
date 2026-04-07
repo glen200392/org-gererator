@@ -18,6 +18,8 @@ export * from "./model/validation";
 export * from "./model/workbook";
 export * from "./model/legacy";
 export * from "./model/search";
+export * from "./model/tree-builder";
+export * from "./model/header-detect";
 export * from "./layout/tree-layout";
 export * from "./layout/overrides";
 export * from "./layout/slides";

@@ -68,6 +68,23 @@ function EditableField({
   );
 }
 
+// ── Pulse animation (injected once into document) ──
+
+let pulseStyleInjected = false;
+function ensurePulseStyle() {
+  if (pulseStyleInjected) return;
+  pulseStyleInjected = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes orgnode-search-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(100, 255, 218, 0.7); }
+      50% { box-shadow: 0 0 12px 4px rgba(100, 255, 218, 0.4); }
+      100% { box-shadow: 0 0 0 0 rgba(100, 255, 218, 0); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 // ── Handle styles (visible on hover via CSS-in-JS) ──
 
 const handleStyle: React.CSSProperties = {
@@ -87,6 +104,16 @@ function OrgNodeComponent(props: { data: OrgNodeData; id: string }) {
   const lang = data.lang ?? "tw";
   const action = data.ruleAction ?? {};
   const onUpdate = data.onUpdate;
+  const isFocusedSearch = data.isFocusedSearch ?? false;
+  const isSearchMatched = data.isSearchMatched ?? false;
+
+  // Counter to force CSS animation re-trigger when focus toggles back to same node
+  const [pulseKey, setPulseKey] = useState(0);
+  useEffect(() => {
+    if (isFocusedSearch) setPulseKey((k) => k + 1);
+  }, [isFocusedSearch]);
+
+  useEffect(() => { ensurePulseStyle(); }, []);
 
   // Colors
   const bgColor = action.fillColor ?? data.bgColor ?? "#0A192F";
@@ -134,7 +161,7 @@ function OrgNodeComponent(props: { data: OrgNodeData; id: string }) {
   const nodeStyle: React.CSSProperties = {
     padding: "8px 12px",
     borderRadius: 6,
-    border: dragBorder,
+    border: isFocusedSearch ? "2px solid #64FFDA" : isSearchMatched ? "2px solid #F59E0B" : dragBorder,
     boxShadow: dragShadow,
     background: bgColor,
     color: textColor,
@@ -146,7 +173,8 @@ function OrgNodeComponent(props: { data: OrgNodeData; id: string }) {
     position: "relative",
     cursor: "grab",
     opacity: isVacant ? 0.75 : 1,
-    transition: "border 0.15s, box-shadow 0.15s",
+    transition: "border 0.15s, box-shadow 0.15s, opacity 0.2s",
+    animation: isFocusedSearch ? "orgnode-search-pulse 0.6s ease-out" : undefined,
   };
 
   const handleSave = (field: string, value: string) => {
@@ -164,7 +192,7 @@ function OrgNodeComponent(props: { data: OrgNodeData; id: string }) {
         style={{ ...handleStyle, opacity: hovered ? 1 : 0 }}
       />
 
-      <div style={nodeStyle}>
+      <div key={isFocusedSearch ? pulseKey : undefined} style={nodeStyle}>
         {/* Drag target label */}
         {dragTarget && dragTarget !== "invalid" && (
           <span style={{

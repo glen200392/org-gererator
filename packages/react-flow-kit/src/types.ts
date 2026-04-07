@@ -15,6 +15,10 @@ export type OrgNodeData = {
   onUpdate?: (nodeId: string, field: string, value: string) => void;
   /** Drag target visual state */
   dragTargetType?: "swap" | "reparent" | "invalid" | null;
+  /** Whether this node is the currently focused search result */
+  isFocusedSearch?: boolean;
+  /** Whether this node matches the current search query */
+  isSearchMatched?: boolean;
   [key: string]: unknown;
 } & OrgPosition;
 

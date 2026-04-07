@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 import type { OrgNode, OrgEdge, ConditionalRule, LayoutDirection, EdgeType } from "@orgchart/core";
-import { collectDescendantIds } from "@orgchart/core";
+import { collectDescendantIds, applySearchState } from "@orgchart/core";
 import type { OrgFlowNode, OrgFlowEdge } from "@orgchart/react-flow-kit";
 import { treeToFlowElements, addCoreEdges } from "@orgchart/react-flow-kit";
 
@@ -76,6 +76,12 @@ interface OrgState {
   // Context menu
   contextMenu: { nodeId: string; x: number; y: number } | null;
 
+  // Search navigation
+  searchQuery: string;
+  searchResultIds: string[];
+  searchResultIndex: number;
+  focusedSearchNodeId: string | null;
+
   // Basic
   setActiveScenario: (id: string) => void;
   addScenario: (scenario: Scenario) => void;
@@ -83,6 +89,12 @@ interface OrgState {
   updateFlowNodes: (nodes: OrgFlowNode[]) => void;
   setLayoutDirection: (dir: LayoutDirection) => void;
   setLang: (lang: "tw" | "en") => void;
+
+  // Search
+  setSearchQuery: (query: string) => void;
+  nextSearchResult: () => void;
+  prevSearchResult: () => void;
+  clearSearch: () => void;
 
   // Selection
   selectNode: (id: string | null) => void;
@@ -232,6 +244,9 @@ function createSampleData(): Scenario {
   return { id: "default", name: "當前組織", roots: [ceo], edges, rules: [] };
 }
 
+// ── Search debounce timer (module-scope) ──
+let searchDebounceTimer: number | undefined;
+
 // ── Store ──
 
 export const useOrgStore = create<OrgState>((set, get) => ({
@@ -245,6 +260,64 @@ export const useOrgStore = create<OrgState>((set, get) => ({
   history: [],
   historyIndex: -1,
   contextMenu: null,
+  searchQuery: "",
+  searchResultIds: [],
+  searchResultIndex: -1,
+  focusedSearchNodeId: null,
+
+  setSearchQuery: (query) => {
+    // Update input display immediately
+    set({ searchQuery: query });
+
+    // Debounce the heavy search + rebuildFlow (200ms)
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = window.setTimeout(() => {
+      const trimmed = query.trim();
+      if (!trimmed) {
+        set({ searchResultIds: [], searchResultIndex: -1, focusedSearchNodeId: null });
+        const scenario = getActiveScenario(get());
+        if (scenario) {
+          applySearchState({ roots: scenario.roots }, "");
+          get().rebuildFlow();
+        }
+        return;
+      }
+      const scenario = getActiveScenario(get());
+      if (!scenario) return;
+      const result = applySearchState({ roots: scenario.roots }, trimmed);
+      const ids = result.matchIdList;
+      const newIndex = ids.length > 0 ? 0 : -1;
+      set({
+        searchResultIds: ids,
+        searchResultIndex: newIndex,
+        focusedSearchNodeId: newIndex >= 0 ? ids[newIndex] : null,
+      });
+      get().rebuildFlow();
+    }, 200);
+  },
+
+  nextSearchResult: () => {
+    const { searchResultIds, searchResultIndex } = get();
+    if (searchResultIds.length === 0) return;
+    const newIndex = (searchResultIndex + 1) % searchResultIds.length;
+    set({ searchResultIndex: newIndex, focusedSearchNodeId: searchResultIds[newIndex] });
+  },
+
+  prevSearchResult: () => {
+    const { searchResultIds, searchResultIndex } = get();
+    if (searchResultIds.length === 0) return;
+    const newIndex = (searchResultIndex - 1 + searchResultIds.length) % searchResultIds.length;
+    set({ searchResultIndex: newIndex, focusedSearchNodeId: searchResultIds[newIndex] });
+  },
+
+  clearSearch: () => {
+    set({ searchQuery: "", searchResultIds: [], searchResultIndex: -1, focusedSearchNodeId: null });
+    const scenario = getActiveScenario(get());
+    if (scenario) {
+      applySearchState({ roots: scenario.roots }, "");
+      get().rebuildFlow();
+    }
+  },
 
   setActiveScenario: (id) => {
     set({ activeScenarioId: id });

@@ -29,8 +29,11 @@ import { exportPNG, exportPDF, getFlowViewport } from "./features/export";
 import { exportPPTX } from "./features/export-pptx";
 import { exportExcel, exportSAPCSV } from "./features/export-excel";
 import { saveState, loadState } from "./features/persistence";
-import type { LayoutDirection, EdgeType } from "@orgchart/core";
+import { parseFile, buildImport, isSupportedImportFile, type ParsedFile } from "./features/import-generic";
+import { ImportPreviewDialog } from "./components/ImportPreviewDialog";
+import type { LayoutDirection, EdgeType, FieldMapping } from "@orgchart/core";
 import type { OrgFlowNode } from "@orgchart/react-flow-kit";
+import { rebuildParentRefs } from "./store/org-store";
 
 const nodeTypes: NodeTypes = {
   orgNode: OrgNode as unknown as NodeTypes["orgNode"],
@@ -84,9 +87,17 @@ function StudioCanvas() {
     layoutDirection,
     lang,
     contextMenu,
+    searchQuery,
+    searchResultIds,
+    searchResultIndex,
+    focusedSearchNodeId,
     rebuildFlow,
     setLayoutDirection,
     setLang,
+    setSearchQuery,
+    nextSearchResult,
+    prevSearchResult,
+    clearSearch,
     selectNode,
     openContextMenu,
     closeContextMenu,
@@ -107,10 +118,14 @@ function StudioCanvas() {
   // UI state
   const [showRulesEditor, setShowRulesEditor] = useState(false);
   const [showScenarioPanel, setShowScenarioPanel] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [pendingConnection, setPendingConnection] = useState<{ source: string; target: string } | null>(null);
   const [edgeCreationSource, setEdgeCreationSource] = useState<string | null>(null);
+
+  // ── Generic import state ──
+  const [importParsed, setImportParsed] = useState<ParsedFile | null>(null);
+  const [importDragOver, setImportDragOver] = useState(false);
+  const [importToast, setImportToast] = useState<{ message: string; type: "success" | "warning" } | null>(null);
 
   // ── Smart drag state ──
   const [isDragging, setIsDragging] = useState(false);
@@ -118,6 +133,16 @@ function StudioCanvas() {
   const dragNodeIdRef = useRef<string | null>(null);
 
   const reactFlowInstance = useReactFlow();
+
+  // Pan viewport to focused search result
+  useEffect(() => {
+    if (!focusedSearchNodeId) return;
+    const node = nodes.find((n) => n.id === focusedSearchNodeId);
+    if (!node?.position) return;
+    const x = node.position.x + (node.measured?.width ?? 200) / 2;
+    const y = node.position.y + (node.measured?.height ?? 90) / 2;
+    reactFlowInstance.setCenter(x, y, { zoom: 1.2, duration: 300 });
+  }, [focusedSearchNodeId, nodes, reactFlowInstance]);
 
   const { layoutNodes } = useElkLayout({
     direction: layoutDirection,
@@ -127,7 +152,12 @@ function StudioCanvas() {
     nodeHeight: 90,
   });
 
-  // Inject callbacks + drag target state into node data
+  // Inject callbacks + drag target + search state into node data
+  const searchMatchSet = useRef(new Set<string>());
+  useEffect(() => {
+    searchMatchSet.current = new Set(searchResultIds);
+  }, [searchResultIds]);
+
   const nodesWithState = useCallback(
     (rawNodes: OrgFlowNode[]): OrgFlowNode[] =>
       rawNodes.map((n) => ({
@@ -136,9 +166,11 @@ function StudioCanvas() {
           ...n.data,
           onUpdate: updateNodeField,
           dragTargetType: dropTarget?.nodeId === n.id ? dropTarget.type : null,
+          isFocusedSearch: n.id === focusedSearchNodeId,
+          isSearchMatched: searchMatchSet.current.has(n.id),
         },
       })),
-    [updateNodeField, dropTarget],
+    [updateNodeField, dropTarget, focusedSearchNodeId],
   );
 
   // ── Initial load ──
@@ -199,6 +231,20 @@ function StudioCanvas() {
     );
   }, [dropTarget, isDragging, setNodes]);
 
+  // Update search focus visuals when focused node changes
+  useEffect(() => {
+    setNodes((prev) =>
+      prev.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          isFocusedSearch: n.id === focusedSearchNodeId,
+          isSearchMatched: searchMatchSet.current.has(n.id),
+        },
+      })),
+    );
+  }, [focusedSearchNodeId, searchResultIds, setNodes]);
+
   // ── Smart Drag Handlers ──
 
   const onNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
@@ -248,6 +294,64 @@ function StudioCanvas() {
     }
   }, [dropTarget, swapSiblingOrder, reparentNode]);
 
+  // ── File import handlers ──
+
+  const handleImportFile = useCallback(async (file: File) => {
+    if (!isSupportedImportFile(file.name)) return;
+    try {
+      const parsed = await parseFile(file);
+      setImportParsed(parsed);
+    } catch (err) {
+      setImportToast({ message: `Import error: ${err instanceof Error ? err.message : "Unknown"}`, type: "warning" });
+      setTimeout(() => setImportToast(null), 4000);
+    }
+  }, []);
+
+  const handleImportConfirm = useCallback((mappings: FieldMapping[]) => {
+    if (!importParsed) return;
+    const result = buildImport(importParsed, mappings);
+    rebuildParentRefs(result.roots);
+
+    const scenarioId = `import_${Date.now()}`;
+    const { addScenario, setActiveScenario } = useOrgStore.getState();
+    addScenario({
+      id: scenarioId,
+      name: result.scenarioName,
+      roots: result.roots,
+      edges: [],
+      rules: [],
+    });
+    setActiveScenario(scenarioId);
+
+    setImportParsed(null);
+
+    // Show result toast
+    const msg = result.warnings.length > 0
+      ? `${lang === "tw" ? "已匯入" : "Imported"} ${result.totalProcessed} ${lang === "tw" ? "筆" : "rows"}. ⚠ ${result.warnings[0]}`
+      : `${lang === "tw" ? "已匯入" : "Imported"} ${result.totalProcessed} ${lang === "tw" ? "筆" : "rows"}`;
+    setImportToast({ message: msg, type: result.warnings.length > 0 ? "warning" : "success" });
+    setTimeout(() => setImportToast(null), 5000);
+  }, [importParsed, lang]);
+
+  // File drop on canvas
+  const onCanvasDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.types.includes("Files")) {
+      setImportDragOver(true);
+    }
+  }, []);
+
+  const onCanvasDragLeave = useCallback(() => {
+    setImportDragOver(false);
+  }, []);
+
+  const onCanvasDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setImportDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleImportFile(file);
+  }, [handleImportFile]);
+
   // ── Click handlers ──
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
@@ -291,7 +395,7 @@ function StudioCanvas() {
     function handleKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
-      if (e.key === "Escape") { setEdgeCreationSource(null); setPendingConnection(null); }
+      if (e.key === "Escape") { setEdgeCreationSource(null); setPendingConnection(null); clearSearch(); }
       if (e.key === "Delete" || e.key === "Backspace") {
         const sel = useOrgStore.getState().selectedNodeId;
         if (sel && document.activeElement?.tagName !== "INPUT") {
@@ -306,7 +410,7 @@ function StudioCanvas() {
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [undo, redo, deleteNode, lang]);
+  }, [undo, redo, deleteNode, lang, clearSearch]);
 
   return (
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
@@ -369,16 +473,45 @@ function StudioCanvas() {
         <button onClick={async () => { const sc = useOrgStore.getState().scenarios.find(s => s.id === useOrgStore.getState().activeScenarioId); if (sc) await exportSAPCSV(sc.roots); }} style={btnStyle}>📋 SAP</button>
         <span style={{ color: "#334155" }}>|</span>
 
+        <label style={{ ...btnStyle, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          📂 {lang === "tw" ? "匯入" : "Import"}
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv,.tsv"
+            style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }}
+          />
+        </label>
+        <span style={{ color: "#334155" }}>|</span>
+
         <button onClick={() => setShowScenarioPanel(v => !v)} style={btnStyle}>
           🗂️ {lang === "tw" ? "方案" : "Scenario"}
         </button>
 
-        <input
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={lang === "tw" ? "🔍 搜尋..." : "🔍 Search..."}
-          style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #334155", background: "#0F172A", color: "#E2E8F0", fontSize: 12, width: 120 }}
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); nextSearchResult(); }
+              if (e.key === "Escape") { e.preventDefault(); clearSearch(); }
+            }}
+            placeholder={lang === "tw" ? "🔍 搜尋..." : "🔍 Search..."}
+            style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #334155", background: "#0F172A", color: "#E2E8F0", fontSize: 12, width: 120 }}
+          />
+          {searchResultIds.length > 0 && (
+            <>
+              <span style={{ color: "#94A3B8", fontSize: 11, whiteSpace: "nowrap" }}>
+                {searchResultIndex + 1}/{searchResultIds.length}
+              </span>
+              <button onClick={prevSearchResult} style={{ ...btnStyle, padding: "2px 6px", fontSize: 11 }} title={lang === "tw" ? "上一筆" : "Previous"}>◀</button>
+              <button onClick={nextSearchResult} style={{ ...btnStyle, padding: "2px 6px", fontSize: 11 }} title={lang === "tw" ? "下一筆" : "Next"}>▶</button>
+            </>
+          )}
+          {searchQuery && searchResultIds.length === 0 && (
+            <span style={{ color: "#EF4444", fontSize: 11 }}>{lang === "tw" ? "無結果" : "No match"}</span>
+          )}
+        </div>
 
         <div style={{ flex: 1 }} />
         <span style={{ color: "#475569", fontSize: 11 }}>{nodes.length} nodes</span>
@@ -395,8 +528,26 @@ function StudioCanvas() {
         </div>
       )}
 
-      {/* React Flow Canvas */}
-      <div style={{ flex: 1 }}>
+      {/* React Flow Canvas (with file drop zone) */}
+      <div
+        style={{ flex: 1, position: "relative" }}
+        onDragOver={onCanvasDragOver}
+        onDragLeave={onCanvasDragLeave}
+        onDrop={onCanvasDrop}
+      >
+        {/* Drag overlay */}
+        {importDragOver && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 100,
+            background: "rgba(15,118,110,0.3)", border: "3px dashed #10B981",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            pointerEvents: "none",
+          }}>
+            <span style={{ color: "#FFF", fontSize: 18, fontWeight: "bold", background: "rgba(0,0,0,0.5)", padding: "8px 20px", borderRadius: 8 }}>
+              {lang === "tw" ? "放開以匯入 Excel/CSV" : "Drop to import Excel/CSV"}
+            </span>
+          </div>
+        )}
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -469,6 +620,34 @@ function StudioCanvas() {
           onSelect={handleEdgeTypeSelect}
           onCancel={() => setPendingConnection(null)}
         />
+      )}
+
+      {/* Import Preview Dialog */}
+      {importParsed && (
+        <ImportPreviewDialog
+          parsed={importParsed}
+          lang={lang}
+          onImport={handleImportConfirm}
+          onCancel={() => setImportParsed(null)}
+        />
+      )}
+
+      {/* Import Toast */}
+      {importToast && (
+        <div style={{
+          position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
+          background: importToast.type === "success" ? "#065F46" : "#92400E",
+          color: "#FFF", padding: "8px 20px", borderRadius: 8, fontSize: 13,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.3)", zIndex: 3000,
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <span>{importToast.type === "success" ? "✓" : "⚠"}</span>
+          <span>{importToast.message}</span>
+          <button
+            onClick={() => setImportToast(null)}
+            style={{ background: "none", border: "none", color: "#FFF", cursor: "pointer", marginLeft: 8 }}
+          >✕</button>
+        </div>
       )}
     </div>
   );
